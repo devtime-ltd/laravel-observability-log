@@ -1,0 +1,49 @@
+{
+    "name": "devtime-ltd/laravel-observability-log",
+    "description": "Structured telemetry for Laravel. Ships events straight to your log channels.",
+    "keywords": ["laravel", "logging", "telemetry", "observability", "middleware"],
+    "license": "MIT",
+    "authors": [
+        {
+            "name": "Alun Davey"
+        }
+    ],
+    "require": {
+        "php": "^8.2",
+        "illuminate/database": "^11.0|^12.0|^13.0",
+        "illuminate/http": "^11.0|^12.0|^13.0",
+        "illuminate/support": "^11.0|^12.0|^13.0"
+    },
+    "require-dev": {
+        "orchestra/testbench": "^9.0|^10.0|^11.0",
+        "pestphp/pest": "^3.0"
+    },
+    "autoload": {
+        "psr-4": {
+            "DevtimeLtd\\LaravelObservabilityLog\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "DevtimeLtd\\LaravelObservabilityLog\\Tests\\": "tests/"
+        }
+    },
+    "extra": {
+        "laravel": {
+            "providers": [
+                "DevtimeLtd\\LaravelObservabilityLog\\ObservabilityLogServiceProvider"
+            ]
+        }
+    },
+    "scripts": {
+        "test": "pest"
+    },
+    "config": {
+        "sort-packages": true,
+        "allow-plugins": {
+            "pestphp/pest-plugin": true
+        }
+    },
+    "minimum-stability": "stable",
+    "prefer-stable": true
+}
