@@ -2,17 +2,22 @@
 
 namespace DevtimeLtd\LaravelObservabilityLog\Tests;
 
-use DevtimeLtd\LaravelObservabilityLog\LogRequest;
+use DevtimeLtd\LaravelObservabilityLog\ExceptionSensor;
 use DevtimeLtd\LaravelObservabilityLog\ObfuscateIp;
+use DevtimeLtd\LaravelObservabilityLog\RequestSensor;
+use Illuminate\Contracts\Debug\ExceptionHandler;
+use Illuminate\Support\Facades\Context;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use Monolog\Handler\TestHandler;
+use Monolog\LogRecord;
 
 class IntegrationTest extends TestCase
 {
     protected function defineEnvironment($app): void
     {
         $app['config']->set('observability-log.requests.channel', 'test-observability');
+        $app['config']->set('observability-log.exceptions.channel', 'test-observability');
         $app['config']->set('logging.channels.test-observability', [
             'driver' => 'monolog',
             'handler' => TestHandler::class,
@@ -26,7 +31,7 @@ class IntegrationTest extends TestCase
 
     protected function defineRoutes($router): void
     {
-        $router->middleware(LogRequest::class)->group(function ($router) {
+        $router->middleware(RequestSensor::class)->group(function ($router) {
             $router->get('/hello', fn () => response()->json(['message' => 'hello']));
 
             $router->get('/users', function () {
@@ -47,8 +52,13 @@ class IntegrationTest extends TestCase
     {
         parent::setUp();
 
-        LogRequest::using(null);
-        LogRequest::extend(null);
+        RequestSensor::using(null);
+        RequestSensor::extend(null);
+        RequestSensor::message(null);
+        ExceptionSensor::using(null);
+        ExceptionSensor::extend(null);
+        ExceptionSensor::message(null);
+        Context::flush();
 
         Schema::create('users', function ($table) {
             $table->id();
@@ -58,16 +68,32 @@ class IntegrationTest extends TestCase
         DB::table('users')->insert(['name' => 'Alice']);
     }
 
-    private function loggedRecord(): \Monolog\LogRecord
+    private function records(): array
     {
         $handler = app('log')->channel('test-observability')->getLogger()->getHandlers()[0];
 
-        return $handler->getRecords()[0];
+        return $handler->getRecords();
     }
 
-    private function loggedEntry(): array
+    private function loggedRecord(int $index = 0): LogRecord
     {
-        return $this->loggedRecord()->context;
+        return $this->records()[$index];
+    }
+
+    private function loggedEntry(int $index = 0): array
+    {
+        return $this->loggedRecord($index)->context;
+    }
+
+    private function recordWithMessage(string $message): ?LogRecord
+    {
+        foreach ($this->records() as $record) {
+            if ($record->message === $message) {
+                return $record;
+            }
+        }
+
+        return null;
     }
 
     public function test_logs_a_successful_request(): void
@@ -110,18 +136,18 @@ class IntegrationTest extends TestCase
 
         $entry = $this->loggedEntry();
 
-        $this->assertSame(1, $entry['query_count']);
-        $this->assertIsFloat($entry['query_total_ms']);
+        $this->assertSame(1, $entry['db_query_count']);
+        $this->assertIsFloat($entry['db_query_total_ms']);
     }
 
     public function test_logs_error_status_when_route_throws(): void
     {
         $this->get('/error')->assertStatus(500);
 
-        $entry = $this->loggedEntry();
-
-        $this->assertSame('GET', $entry['method']);
-        $this->assertSame(500, $entry['status']);
+        $record = $this->recordWithMessage('http.request');
+        $this->assertNotNull($record);
+        $this->assertSame('GET', $record->context['method']);
+        $this->assertSame(500, $record->context['status']);
     }
 
     public function test_obfuscates_ip(): void
@@ -137,7 +163,7 @@ class IntegrationTest extends TestCase
 
     public function test_extend_adds_fields(): void
     {
-        LogRequest::extend(function ($request, $response, $entry) {
+        RequestSensor::extend(function ($request, $response, $entry) {
             $entry['custom'] = 'value';
 
             return $entry;
@@ -152,7 +178,7 @@ class IntegrationTest extends TestCase
 
     public function test_using_replaces_default_entry(): void
     {
-        LogRequest::using(function ($request, $response, $measurements) {
+        RequestSensor::using(function ($request, $response, $measurements) {
             return [
                 'only_this' => true,
                 'duration' => $measurements['duration_ms'],
@@ -186,7 +212,7 @@ class IntegrationTest extends TestCase
 
     public function test_message_callback_overrides_config(): void
     {
-        LogRequest::message(fn ($request, $response) => 'callback.request');
+        RequestSensor::message(fn ($request, $response) => 'callback.request');
 
         $this->get('/hello')->assertOk();
 
@@ -200,5 +226,208 @@ class IntegrationTest extends TestCase
         $this->get('/hello')->assertOk();
 
         $this->assertSame('debug', $this->loggedRecord()->level->toPsrLogLevel());
+    }
+
+    public function test_promoted_top_level_fields(): void
+    {
+        $this->get('/users/42/posts/7?include=comments')->assertOk();
+
+        $entry = $this->loggedEntry();
+
+        $this->assertSame('http', $entry['scheme']);
+        $this->assertSame('localhost', $entry['host']);
+        $this->assertSame('include=comments', $entry['query_string']);
+        $this->assertArrayHasKey('action', $entry);
+        $this->assertIsString($entry['action']);
+    }
+
+    public function test_captures_headers_with_redaction_when_enabled(): void
+    {
+        config(['observability-log.requests.capture_headers' => true]);
+
+        $this->get('/hello', [
+            'Authorization' => 'Bearer secret-token',
+            'X-Tenant-Id' => 'acme',
+        ])->assertOk();
+
+        $entry = $this->loggedEntry();
+
+        $this->assertArrayHasKey('headers', $entry);
+        $this->assertSame('[redacted]', $entry['headers']['authorization']);
+        $this->assertSame('acme', $entry['headers']['x-tenant-id']);
+    }
+
+    public function test_headers_omitted_by_default(): void
+    {
+        $this->get('/hello')->assertOk();
+
+        $entry = $this->loggedEntry();
+
+        $this->assertArrayNotHasKey('headers', $entry);
+    }
+
+    public function test_trace_id_from_request_header(): void
+    {
+        $this->get('/hello', ['X-Request-Id' => 'abc-123'])->assertOk();
+
+        $entry = $this->loggedEntry();
+
+        $this->assertSame('abc-123', $entry['trace_id']);
+    }
+
+    public function test_trace_id_falls_back_to_context(): void
+    {
+        Context::add('trace_id', 'ctx-999');
+
+        $this->get('/hello')->assertOk();
+
+        $entry = $this->loggedEntry();
+
+        $this->assertSame('ctx-999', $entry['trace_id']);
+    }
+
+    public function test_exception_sensor_reports_via_real_handler(): void
+    {
+        $handler = app(ExceptionHandler::class);
+        $handler->report(new \RuntimeException('boom'));
+
+        $record = $this->recordWithMessage('error.exception');
+
+        $this->assertNotNull($record);
+        $this->assertSame('error', $record->level->toPsrLogLevel());
+        $this->assertSame(\RuntimeException::class, $record->context['class']);
+        $this->assertSame('boom', $record->context['message']);
+        $this->assertIsString($record->context['trace']);
+
+        // HTTP kernel has not been resolved in this test path, so the
+        // entry should not include request context fields.
+        $this->assertArrayNotHasKey('method', $record->context);
+        $this->assertArrayNotHasKey('url', $record->context);
+        $this->assertArrayNotHasKey('headers', $record->context);
+    }
+
+    public function test_exception_ignore_list_prevents_logging(): void
+    {
+        config(['observability-log.exceptions.ignore' => [\RuntimeException::class]]);
+
+        $handler = app(ExceptionHandler::class);
+        $handler->report(new \RuntimeException('boom'));
+
+        $this->assertNull($this->recordWithMessage('error.exception'));
+    }
+
+    public function test_error_route_produces_both_request_and_exception_records_sharing_trace_id(): void
+    {
+        $this->get('/error', ['X-Request-Id' => 'shared-42'])->assertStatus(500);
+
+        $requestRecord = $this->recordWithMessage('http.request');
+        $exceptionRecord = $this->recordWithMessage('error.exception');
+
+        $this->assertNotNull($requestRecord);
+        $this->assertNotNull($exceptionRecord);
+        $this->assertSame('shared-42', $requestRecord->context['trace_id']);
+        $this->assertSame('shared-42', $exceptionRecord->context['trace_id']);
+    }
+
+    public function test_trace_args_config_produces_structured_trace(): void
+    {
+        config(['observability-log.exceptions.trace_args' => true]);
+
+        $handler = app(ExceptionHandler::class);
+        $handler->report(new \RuntimeException('boom'));
+
+        $record = $this->recordWithMessage('error.exception');
+
+        $this->assertNotNull($record);
+        $this->assertIsArray($record->context['trace']);
+    }
+
+    public function test_trace_max_bytes_truncates_long_traces(): void
+    {
+        config(['observability-log.exceptions.trace_max_bytes' => 50]);
+
+        $handler = app(ExceptionHandler::class);
+        $handler->report(new \RuntimeException('boom'));
+
+        $record = $this->recordWithMessage('error.exception');
+
+        $this->assertNotNull($record);
+        $this->assertStringContainsString('[truncated at 50 bytes]', $record->context['trace']);
+    }
+
+    public function test_db_query_listener_registers_exactly_once_across_requests(): void
+    {
+        // Simulate Octane-style repeated requests on the same app. The
+        // DB listener must not accumulate: each query should be counted
+        // once per request, not N times after N requests.
+        $this->get('/users')->assertOk();
+        $this->get('/users')->assertOk();
+        $this->get('/users')->assertOk();
+
+        $records = array_values(array_filter(
+            $this->records(),
+            fn ($record) => $record->message === 'http.request'
+        ));
+
+        $this->assertCount(3, $records);
+
+        foreach ($records as $record) {
+            $this->assertSame(1, $record->context['db_query_count']);
+        }
+    }
+
+    public function test_exception_in_testbench_http_test_includes_request_context(): void
+    {
+        // HTTP kernel is resolved by $this->get, so exception entries
+        // triggered within the request lifecycle should include request
+        // fields even though runningInConsole() is true in phpunit.
+        $this->get('/error', ['X-Request-Id' => 'req-ok'])->assertStatus(500);
+
+        $exception = $this->recordWithMessage('error.exception');
+
+        $this->assertNotNull($exception);
+        $this->assertArrayHasKey('method', $exception->context);
+        $this->assertSame('GET', $exception->context['method']);
+        $this->assertArrayNotHasKey('command', $exception->context);
+    }
+
+    public function test_query_listener_not_registered_when_collect_queries_disabled(): void
+    {
+        config(['observability-log.requests.collect_queries' => false]);
+
+        $this->get('/hello')->assertOk();
+
+        $this->assertFalse($this->app->bound(RequestSensor::QUERY_LISTENER_BINDING));
+    }
+
+    public function test_trace_id_is_capped_at_configured_length(): void
+    {
+        config(['observability-log.trace_id_max_length' => 8]);
+
+        $this->get('/hello', ['X-Request-Id' => 'this-is-a-very-long-trace-id'])->assertOk();
+
+        $entry = $this->loggedEntry();
+
+        $this->assertSame('this-is-', $entry['trace_id']);
+    }
+
+    public function test_trace_args_frames_are_capped(): void
+    {
+        config([
+            'observability-log.exceptions.trace_args' => true,
+            'observability-log.exceptions.trace_args_max_frames' => 1,
+        ]);
+
+        $handler = app(ExceptionHandler::class);
+        $handler->report(new \RuntimeException('boom'));
+
+        $record = $this->recordWithMessage('error.exception');
+
+        $this->assertNotNull($record);
+        $this->assertIsArray($record->context['trace']);
+        $trace = $record->context['trace'];
+        // 1 frame + the truncation marker
+        $this->assertCount(2, $trace);
+        $this->assertArrayHasKey('truncated', end($trace));
     }
 }
