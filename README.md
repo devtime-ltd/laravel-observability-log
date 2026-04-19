@@ -1,8 +1,14 @@
-# Laravel Telemetry Log
+# Laravel Observability Log
 
-Structured telemetry for Laravel. Ships events straight to your log channels, so whatever log driver you use (stack, Axiom, Better Stack, Papertrail, stderr) doubles as your observability pipeline.
+A set of sensors that emit structured events through Laravel log channels. Whatever log driver you use (stack, Axiom, Better Stack, Papertrail, stderr) doubles as your observability pipeline.
 
-Today this is a request logging middleware. The package is structured to grow additional sensors (queued jobs, scheduled tasks, artisan commands, cache, mail, exceptions) as sibling features under the same config root.
+Ships two sensors today (`RequestSensor`, `ExceptionSensor`), with more on the [roadmap](#roadmap).
+
+## Design philosophy
+
+- **Lean defaults.** Entries ship with method, path, status, duration, user, ip, trace_id.
+- **Opinionated top-level keys.** `scheme`, `host`, `query_string`, `action`, `user_agent`, `referer` are promoted to the top level for simpler filtering.
+- **Richer collection via config.** Full header capture and structured stack traces with argument values are opt-in.
 
 ## Installation
 
@@ -10,57 +16,71 @@ Today this is a request logging middleware. The package is structured to grow ad
 composer require devtime-ltd/laravel-observability-log
 ```
 
-## Request logging middleware
+## Quick start
 
-`LogRequest` logs structured request data (method, URL, status, duration, query stats, memory) to one or more log channels.
+Enable the whole package with one env var:
 
-### Setup
+```env
+OBSERVABILITY_LOG_CHANNEL=axiom
+```
 
-Register the middleware in `bootstrap/app.php`:
+This tells every sensor to log to the `axiom` channel. Set comma-separated values (e.g. `axiom,betterstack`) to log to multiple channels via `Log::stack()`. To log to different channels per sensor, publish the config and set each sensor's `channel` key to a literal value or a dedicated env var of your choosing.
+
+Then register the request middleware in `bootstrap/app.php`:
 
 ```php
-use DevtimeLtd\LaravelObservabilityLog\LogRequest;
+use DevtimeLtd\LaravelObservabilityLog\RequestSensor;
 
 ->withMiddleware(function (Middleware $middleware) {
-    $middleware->prepend(LogRequest::class);
+    $middleware->prepend(RequestSensor::class);
 })
 ```
 
-Set the channel to log to:
+`ExceptionSensor` is registered automatically; no bootstrap change required.
 
-```env
-LOG_REQUESTS_CHANNEL=axiom
+Publish the config file to customise defaults:
+
+```bash
+php artisan vendor:publish --tag=observability-log
 ```
 
-Can also pass multiple channels (e.g. `axiom,betterstack`) for logging to multiple providers. Leave unset to disable, the middleware is a no-op without this env var.
+## Request sensor
 
-> **Note:** Logging happens inline in `handle()` rather than `terminate()`. We found `terminate()` didn't fire in all hosting setups.
+`RequestSensor` is a middleware that logs structured request data (method, URL, status, duration, DB query stats, memory) to one or more log channels.
+
+The channel is driven by the package-level `OBSERVABILITY_LOG_CHANNEL` env var from the [Quick start](#quick-start) section. Leave it unset to disable the middleware; it is a no-op without a resolved channel. To log this sensor to a different channel than the rest of the package, publish the config and edit `observability-log.requests.channel`.
 
 ### Logged fields
 
-| Field            | Description                                 |
-| ---------------- | ------------------------------------------- |
-| `method`         | HTTP method                                 |
-| `url`            | Full URL                                    |
-| `path`           | Request path                                |
-| `route`          | Named route (if any)                        |
-| `route_params`   | Route parameters (raw values, pre-binding)  |
-| `status`         | Response status code                        |
-| `content_type`   | Response Content-Type                       |
-| `response_size`  | Response body size in bytes                 |
-| `user_id`        | Authenticated user ID (null if guest)       |
-| `ip`             | Client IP (supports obfuscation, see below) |
-| `user_agent`     | User agent string                           |
-| `referer`        | Referer header                              |
-| `duration_ms`    | Total request time in milliseconds          |
-| `memory_peak_mb` | Peak memory usage                           |
-| `query_count`    | Number of database queries                  |
-| `query_total_ms` | Total time spent in database queries        |
-| `slow_queries`   | Queries exceeding the slow query threshold  |
+| Field                | Description                                                          |
+| -------------------- | -------------------------------------------------------------------- |
+| `method`             | HTTP method                                                          |
+| `url`                | Full URL                                                             |
+| `scheme`             | `http` or `https`                                                    |
+| `host`               | Host header value                                                    |
+| `path`               | Request path                                                         |
+| `query_string`       | Raw query string without the leading `?`, omitted when empty         |
+| `route`              | Named route (if any)                                                 |
+| `route_params`       | Route parameters (raw values, pre-binding)                           |
+| `action`             | Controller action or closure marker, omitted when unavailable        |
+| `status`             | Response status code                                                 |
+| `content_type`       | Response Content-Type                                                |
+| `response_size`      | Response body size in bytes                                          |
+| `user_id`            | Authenticated user ID (null if guest)                                |
+| `ip`                 | Client IP (supports obfuscation, see below)                          |
+| `user_agent`         | User-Agent header value                                              |
+| `referer`            | Referer header value                                                 |
+| `duration_ms`        | Total request time in milliseconds                                   |
+| `memory_peak_mb`     | Peak memory usage                                                    |
+| `db_query_count`     | Number of database queries                                           |
+| `db_query_total_ms`  | Total time spent in database queries                                 |
+| `db_slow_queries`    | Queries exceeding the slow query threshold                           |
+| `headers`            | Full header map when capture is enabled (see [Header capture](#header-capture)) |
+| `trace_id`           | Correlation id when resolvable (see [Trace ID](#trace-id))           |
 
 ### Options
 
-Publish the config file with `php artisan vendor:publish --tag=observability-log`. Options live under `config/observability-log.php` in the `requests` section.
+Options live under `config/observability-log.php` in the `requests` section.
 
 #### Log message
 
@@ -68,35 +88,33 @@ The log message used for request entries. Default: `'http.request'`.
 
 ```php
 'requests' => [
-    'message' => env('LOG_REQUESTS_MESSAGE', 'http.request'),
+    'message' => 'http.request',
 ],
 ```
 
-This makes it easy to distinguish request logs from application logs (e.g. `Log::error()`) when they share the same log destination.
-
-You can also override the message at runtime via `LogRequest::message()` in your `AppServiceProvider::boot()`, either a fixed string or a callback:
+Override at runtime via `RequestSensor::message()` in your `AppServiceProvider::boot()`, either a fixed string or a callback:
 
 ```php
-use DevtimeLtd\LaravelObservabilityLog\LogRequest;
+use DevtimeLtd\LaravelObservabilityLog\RequestSensor;
 
 // Fixed string
-LogRequest::message('api.request');
+RequestSensor::message('api.request');
 
 // Dynamic based on request
-LogRequest::message(function ($request, $response) {
+RequestSensor::message(function ($request, $response) {
     return $request->is('api/*') ? 'api.request' : 'web.request';
 });
 ```
 
-This takes precedence over the config value. Pass `null` to revert to the config default.
+Pass `null` to revert to the config default.
 
 #### Log level
 
-The PSR-3 log level that request entries are logged at. Default: `'info'`.
+The PSR-3 log level that request entries are logged at. Default: `'info'`. All PSR-3 levels (`debug`, `info`, `notice`, `warning`, `error`, `critical`, `alert`, `emergency`) are valid.
 
 ```php
 'requests' => [
-    'level' => env('LOG_REQUESTS_LEVEL', 'info'),
+    'level' => 'debug',
 ],
 ```
 
@@ -110,7 +128,7 @@ Disable query measurement to skip the `DB::listen()` overhead:
 ],
 ```
 
-This omits `query_count`, `query_total_ms`, and `slow_queries` from the log entry. Default: `true`.
+This omits `db_query_count`, `db_query_total_ms`, and `db_slow_queries` from the log entry. Default: `true`.
 
 #### Slow query threshold
 
@@ -122,7 +140,17 @@ Threshold in milliseconds for capturing slow queries:
 ],
 ```
 
-Set to `null` to disable slow query collection while still tracking `query_count` and `query_total_ms`. Default: `100`.
+Set to `null` to disable slow query collection while still tracking `db_query_count` and `db_query_total_ms`. Default: `100`.
+
+#### Slow queries per-request cap
+
+```php
+'requests' => [
+    'slow_queries_max_count' => 100,
+],
+```
+
+Limits how many slow queries are captured in a single request. When the cap is hit, a truncation marker (`['truncated' => 'N more slow queries dropped']`) is appended to `db_slow_queries`. Default: `100`. Set to `null` (or `0`) to disable.
 
 #### IP obfuscation
 
@@ -155,12 +183,12 @@ Default: `false` (no masking).
 
 ### Extending log entries
 
-Use `LogRequest::extend()` to add project-specific fields, or overwrite default ones. Call this in your `AppServiceProvider::boot()`:
+Use `RequestSensor::extend()` to add project-specific fields, or overwrite default ones. Call this in your `AppServiceProvider::boot()`:
 
 ```php
-use DevtimeLtd\LaravelObservabilityLog\LogRequest;
+use DevtimeLtd\LaravelObservabilityLog\RequestSensor;
 
-LogRequest::extend(function ($request, $response, $entry) {
+RequestSensor::extend(function ($request, $response, $entry) {
     $entry['tenant_id'] = $request->header('X-Tenant-ID');
     return $entry;
 });
@@ -168,12 +196,12 @@ LogRequest::extend(function ($request, $response, $entry) {
 
 ### Custom log entry
 
-If you wish to completely replace the default log entry fields with your own, use `LogRequest::using()`. The callback receives the request, response, and a measurements array:
+To completely replace the default entry fields with your own, use `RequestSensor::using()`. The callback receives the request, response, and a measurements array:
 
 ```php
-use DevtimeLtd\LaravelObservabilityLog\LogRequest;
+use DevtimeLtd\LaravelObservabilityLog\RequestSensor;
 
-LogRequest::using(function ($request, $response, $measurements) {
+RequestSensor::using(function ($request, $response, $measurements) {
     return [
         'method' => $request->method(),
         'path' => $request->path(),
@@ -183,15 +211,227 @@ LogRequest::using(function ($request, $response, $measurements) {
 });
 ```
 
-`$measurements` contains the collected metrics based on config: `duration_ms`, `memory_peak_mb`, and when query collection is enabled, `query_count`, `query_total_ms`, `slow_queries`.
+`$measurements` contains the collected metrics based on config: `duration_ms`, `memory_peak_mb`, and when query collection is enabled, `db_query_count`, `db_query_total_ms`, `db_slow_queries`.
 
-Note that `extend()` runs after `using()`, so you can utilise both in a request lifecycle.
+`extend()` runs after `using()`, so you can use both.
+
+## Exception sensor
+
+`ExceptionSensor` hooks Laravel's exception reporter (`$handler->reportable(...)`) and emits a structured entry for every unhandled exception that Laravel would normally report. Registration is automatic through the service provider.
+
+The channel is driven by the package-level `OBSERVABILITY_LOG_CHANNEL` env var. Leave it unset to disable this sensor. To log exceptions to a different channel than request entries, publish the config and edit `observability-log.exceptions.channel`.
+
+> **PII note:** `message` and each entry in `previous[]` is logged verbatim. Some exceptions embed user data (e.g. `PDOException` on a `UNIQUE` constraint may contain `Duplicate entry 'alice@example.com' for key 'users_email'`). Strip or hash via `ExceptionSensor::extend()` if needed.
+
+### Logged fields
+
+| Field       | Description                                                      |
+| ----------- | ---------------------------------------------------------------- |
+| `class`     | Fully-qualified exception class                                  |
+| `message`   | Exception message                                                |
+| `file`      | File where the exception was thrown                              |
+| `line`      | Line number in that file                                         |
+| `code`      | Exception code                                                   |
+| `trace`     | Stack trace (see [Trace format](#trace-format))                  |
+| `previous`  | Up to 3 previous exceptions as `[class, message]`, when present  |
+| `method`    | HTTP method, when a request is bound                             |
+| `url`       | Full URL, when a request is bound                                |
+| `route`     | Named route, when a request is bound                             |
+| `user_id`   | Authenticated user ID, when a request is bound                   |
+| `ip`        | Client IP, when a request is bound                               |
+| `command`   | CLI command name, when running in console                        |
+| `headers`   | Full header map when header capture is enabled                   |
+| `trace_id`  | Correlation id when resolvable                                   |
+
+### Trace format
+
+By default `trace` is a multi-line string from `getTraceAsString()`: every frame present, argument values replaced by their types.
+
+Config controls:
+
+```php
+'exceptions' => [
+    'trace' => true,                    // false to omit the field
+    'trace_args' => false,              // true: structured array with arg values
+    'trace_args_max_frames' => 50,      // null to disable the cap
+    'trace_max_bytes' => 16384,         // null to disable the cap
+    'previous_max_depth' => 3,          // null: unbounded, 0: omit, positive: cap
+],
+```
+
+`trace_args` requires `zend.exception_ignore_args=Off` in `php.ini`; PHP strips arg values from `Throwable::getTrace()` when it is `On` (the PHP 7.4+ default).
+
+When `trace_max_bytes` is hit, the string is cut at the last frame boundary and a `... [truncated at N bytes]` marker is appended. When `trace_args_max_frames` is hit, a `['truncated' => 'after N frames']` marker is appended to the array.
+
+### Ignore list
+
+Suppress specific exception classes (subclasses are matched via `is_a()`):
+
+```php
+'exceptions' => [
+    'ignore' => [
+        \Illuminate\Auth\AuthenticationException::class,
+        \App\Exceptions\KnownBenignException::class,
+    ],
+],
+```
+
+### Log level
+
+Default: `'error'`. All PSR-3 levels are valid.
+
+```php
+'exceptions' => [
+    'level' => 'critical',
+],
+```
+
+### Customising the entry
+
+`ExceptionSensor` mirrors `RequestSensor`'s callback surface:
+
+```php
+use DevtimeLtd\LaravelObservabilityLog\ExceptionSensor;
+
+// Replace the default entry
+ExceptionSensor::using(fn (Throwable $e) => [
+    'class' => get_class($e),
+    'message' => $e->getMessage(),
+    'fingerprint' => md5($e->getFile().$e->getLine()),
+]);
+
+// Add fields on top of the default entry
+ExceptionSensor::extend(function (Throwable $e, array $entry) {
+    $entry['git_sha'] = env('GIT_SHA');
+    return $entry;
+});
+
+// Customise the log message
+ExceptionSensor::message(fn (Throwable $e) => 'error.'.class_basename($e));
+```
+
+## Header capture
+
+Off by default on both sensors; typical payload adds 1 to 3 KB per entry. Enable for the whole package:
+
+```env
+OBSERVABILITY_LOG_CAPTURE_HEADERS=true
+```
+
+To enable on only one sensor, publish the config and toggle `capture_headers` on that section alone.
+
+When enabled, headers are emitted under a `headers` key with lowercase names:
+
+```json
+"headers": {
+    "accept": "application/json",
+    "x-request-id": "abc-123",
+    "authorization": "[redacted]",
+    "cookie": "[redacted]"
+}
+```
+
+### Redaction
+
+Sensitive header values are replaced with the literal string `[redacted]` (the key is kept so queries can still filter on presence). Default redact list:
+
+- `authorization`
+- `cookie`
+- `set-cookie`
+- `proxy-authorization`
+- `x-csrf-token`
+- `x-xsrf-token`
+- `x-api-key`
+- `x-auth-token`
+- `x-access-token`
+- `x-session-token`
+
+Matching is case-insensitive. Extend by editing the top-level `redact_headers` config array:
+
+```php
+// config/observability-log.php
+'redact_headers' => [
+    'authorization',
+    'cookie',
+    'set-cookie',
+    'proxy-authorization',
+    'x-csrf-token',
+    'x-xsrf-token',
+    'x-api-key',
+    'x-auth-token',
+    'x-access-token',
+    'x-session-token',
+    'x-internal-signing-key',
+],
+```
+
+### Header value size cap
+
+Captured header values are truncated at `observability-log.header_value_max_length` bytes (default 8192). Set to `null` or `0` to disable. Multi-value headers have each value capped independently.
+
+### Multi-value headers
+
+Headers with a single value are emitted as a string. Headers with multiple values (e.g. `Accept`) stay as an array.
+
+## Trace ID
+
+Every sensor entry can include a top-level `trace_id` so records from the same lifecycle correlate with a single-field query (for example in Axiom: `where trace_id = 'abc-123'`).
+
+The sensor tries three sources in order:
+
+1. **Configured callable.** Set `observability-log.trace_id` to a closure for full control:
+   ```php
+   'trace_id' => fn (?Illuminate\Http\Request $request) => $request?->attributes->get('trace_id'),
+   ```
+2. **Configured header list.** The default is a first-match-wins array:
+   ```php
+   'trace_id' => ['X-Request-Id', 'X-Trace-Id', 'X-Correlation-Id'],
+   ```
+3. **Laravel `Context` facade.** Set a correlation id once from middleware and every sensor picks it up, including queued jobs dispatched from that request (Context propagates across queue serialization):
+   ```php
+   use Illuminate\Support\Facades\Context;
+   use Illuminate\Support\Str;
+
+   Context::add('trace_id', Str::uuid()->toString());
+   ```
+
+When nothing resolves, the `trace_id` field is omitted.
+
+Resolved ids are capped at `observability-log.trace_id_max_length` bytes (default 128). Set to `null` or `0` to disable.
+
+## Octane, RoadRunner, Swoole
+
+Tested with repeated-request scenarios in `tests/IntegrationTest.php`. No extra setup required:
+
+- Static callbacks (set in `AppServiceProvider::boot()`) persist across requests.
+- The DB query listener registers once per worker via a container-scoped flag.
+- User callbacks (`using` / `extend` / `message`) run inside `try/catch`; a throw falls back to the default entry and surfaces via `Log::error()`.
+- Exception re-entrance is guarded against logger failures triggering Laravel to re-report.
+
+## Roadmap
+
+Each row shows the event name emitted on the configured log channel.
+
+- [x] `RequestSensor` (`http.request`), incoming HTTP requests
+- [x] `ExceptionSensor` (`error.exception`), exceptions reported via Laravel's exception handler
+- [ ] `JobSensor` (`job.attempt`, `job.queued`), queued job attempts and enqueues
+- [ ] `CommandSensor` (`console.command`), Artisan command completions
+- [ ] `ScheduledTaskSensor` (`schedule.task`), scheduled task completions
+- [ ] `CacheSensor` (`cache.hit`, `cache.miss`, `cache.write`, `cache.delete`), cache operations
+- [ ] `OutgoingHttpSensor` (`http.outgoing`), outgoing HTTP via the `Http` facade plus optional Guzzle middleware
+- [ ] `MailSensor` (`mail.sent`), mail delivery
+- [ ] `NotificationSensor` (`notification.sent`), notification delivery
+- [ ] `observability:deploy` Artisan command, deploy markers for graph overlays
 
 ## Testing
 
 ```bash
 composer test
 ```
+
+## Credits
+
+Sensor class layout inspired by [Laravel Nightwatch](https://github.com/laravel/nightwatch) (MIT).
 
 ## License
 
