@@ -243,7 +243,7 @@ class ExceptionSensor
     /**
      * previous_max_depth: null unbounded, 0 or negative omits, positive caps.
      *
-     * @return list<array{class: string, message: string}>
+     * @return list<array{class: string, message: string, context?: array<string, mixed>}>
      */
     private static function buildPrevious(Throwable $e): array
     {

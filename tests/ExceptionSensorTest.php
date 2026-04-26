@@ -951,6 +951,27 @@ describe('exception context()', function () {
         ExceptionSensor::report($e);
     });
 
+    it('omits exception_context when context() returns a non-array', function () {
+        config(['observability-log.exceptions.channel' => 'test-channel']);
+
+        $e = new class('boom') extends RuntimeException
+        {
+            public function context(): mixed
+            {
+                return 'not-an-array';
+            }
+        };
+
+        $channel = Mockery::mock();
+        $channel->shouldReceive('log')
+            ->once()
+            ->withArgs(fn (string $level, string $message, array $context) => ! array_key_exists('exception_context', $context));
+
+        Log::shouldReceive('channel')->with('test-channel')->andReturn($channel);
+
+        ExceptionSensor::report($e);
+    });
+
     it('omits exception_context when the exception has no context() method', function () {
         config(['observability-log.exceptions.channel' => 'test-channel']);
 
