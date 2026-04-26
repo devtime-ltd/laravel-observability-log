@@ -139,6 +139,11 @@ class ExceptionSensor
             'code' => $e->getCode(),
         ];
 
+        $context = self::extractExceptionContext($e);
+        if ($context !== null) {
+            $entry['exception_context'] = $context;
+        }
+
         if (config('observability-log.exceptions.trace', true)) {
             if (config('observability-log.exceptions.trace_args', false)) {
                 $entry['trace'] = self::capTraceFrames($e->getTrace());
@@ -261,15 +266,44 @@ class ExceptionSensor
                 break;
             }
 
-            $out[] = [
+            $frame = [
                 'class' => get_class($previous),
                 'message' => $previous->getMessage(),
             ];
+
+            $context = self::extractExceptionContext($previous);
+            if ($context !== null) {
+                $frame['context'] = $context;
+            }
+
+            $out[] = $frame;
             $previous = $previous->getPrevious();
             $depth++;
         }
 
         return $out;
+    }
+
+    /**
+     * @return array<string, mixed>|null
+     */
+    private static function extractExceptionContext(Throwable $e): ?array
+    {
+        if (! method_exists($e, 'context')) {
+            return null;
+        }
+
+        try {
+            $context = $e->context();
+        } catch (Throwable) {
+            return null;
+        }
+
+        if (! is_array($context) || $context === []) {
+            return null;
+        }
+
+        return $context;
     }
 
     private static function resolveRequest(Application $app): ?Request
