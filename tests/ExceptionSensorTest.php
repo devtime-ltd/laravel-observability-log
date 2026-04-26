@@ -905,3 +905,133 @@ describe('level config', function () {
         ExceptionSensor::report(new RuntimeException('boom'));
     });
 });
+
+describe('exception context()', function () {
+    it('captures the context() array on the root exception', function () {
+        config(['observability-log.exceptions.channel' => 'test-channel']);
+
+        $e = new class('boom') extends RuntimeException
+        {
+            public function context(): array
+            {
+                return ['order_id' => 123, 'user_id' => 7];
+            }
+        };
+
+        $channel = Mockery::mock();
+        $channel->shouldReceive('log')
+            ->once()
+            ->withArgs(function (string $level, string $message, array $context) {
+                return ($context['exception_context'] ?? null) === ['order_id' => 123, 'user_id' => 7];
+            });
+
+        Log::shouldReceive('channel')->with('test-channel')->andReturn($channel);
+
+        ExceptionSensor::report($e);
+    });
+
+    it('omits exception_context when context() returns an empty array', function () {
+        config(['observability-log.exceptions.channel' => 'test-channel']);
+
+        $e = new class('boom') extends RuntimeException
+        {
+            public function context(): array
+            {
+                return [];
+            }
+        };
+
+        $channel = Mockery::mock();
+        $channel->shouldReceive('log')
+            ->once()
+            ->withArgs(fn (string $level, string $message, array $context) => ! array_key_exists('exception_context', $context));
+
+        Log::shouldReceive('channel')->with('test-channel')->andReturn($channel);
+
+        ExceptionSensor::report($e);
+    });
+
+    it('omits exception_context when the exception has no context() method', function () {
+        config(['observability-log.exceptions.channel' => 'test-channel']);
+
+        $channel = Mockery::mock();
+        $channel->shouldReceive('log')
+            ->once()
+            ->withArgs(fn (string $level, string $message, array $context) => ! array_key_exists('exception_context', $context));
+
+        Log::shouldReceive('channel')->with('test-channel')->andReturn($channel);
+
+        ExceptionSensor::report(new RuntimeException('boom'));
+    });
+
+    it('swallows exceptions thrown by context() and omits the field', function () {
+        config(['observability-log.exceptions.channel' => 'test-channel']);
+
+        $e = new class('boom') extends RuntimeException
+        {
+            public function context(): array
+            {
+                throw new RuntimeException('context blew up');
+            }
+        };
+
+        $channel = Mockery::mock();
+        $channel->shouldReceive('log')
+            ->once()
+            ->withArgs(fn (string $level, string $message, array $context) => ! array_key_exists('exception_context', $context));
+
+        Log::shouldReceive('channel')->with('test-channel')->andReturn($channel);
+
+        ExceptionSensor::report($e);
+    });
+
+    it('attaches context() to previous frames when present', function () {
+        config(['observability-log.exceptions.channel' => 'test-channel']);
+
+        $inner = new class('inner') extends RuntimeException
+        {
+            public function context(): array
+            {
+                return ['stage' => 'payment'];
+            }
+        };
+
+        $outer = new RuntimeException('outer', 0, $inner);
+
+        $channel = Mockery::mock();
+        $channel->shouldReceive('log')
+            ->once()
+            ->withArgs(function (string $level, string $message, array $context) {
+                $previous = $context['previous'] ?? [];
+
+                return count($previous) === 1
+                    && $previous[0]['message'] === 'inner'
+                    && ($previous[0]['context'] ?? null) === ['stage' => 'payment'];
+            });
+
+        Log::shouldReceive('channel')->with('test-channel')->andReturn($channel);
+
+        ExceptionSensor::report($outer);
+    });
+
+    it('omits context on previous frames when context() is missing', function () {
+        config(['observability-log.exceptions.channel' => 'test-channel']);
+
+        $inner = new RuntimeException('inner');
+        $outer = new RuntimeException('outer', 0, $inner);
+
+        $channel = Mockery::mock();
+        $channel->shouldReceive('log')
+            ->once()
+            ->withArgs(function (string $level, string $message, array $context) {
+                $previous = $context['previous'] ?? [];
+
+                return count($previous) === 1
+                    && ! array_key_exists('context', $previous[0]);
+            });
+
+        Log::shouldReceive('channel')->with('test-channel')->andReturn($channel);
+
+        ExceptionSensor::report($outer);
+    });
+});
