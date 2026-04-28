@@ -53,7 +53,7 @@ it('counts database queries', function () {
 it('captures slow queries above threshold', function () {
     config([
         'observability-log.requests.channel' => 'test-channel',
-        'observability-log.requests.slow_query_threshold' => 0,
+        'observability-log.requests.db_slow_query_threshold' => 0,
     ]);
 
     $channel = Mockery::mock();
@@ -80,7 +80,7 @@ it('captures slow queries above threshold', function () {
 it('does not capture slow queries when threshold is null', function () {
     config([
         'observability-log.requests.channel' => 'test-channel',
-        'observability-log.requests.slow_query_threshold' => null,
+        'observability-log.requests.db_slow_query_threshold' => null,
     ]);
 
     $channel = Mockery::mock();
@@ -102,10 +102,10 @@ it('does not capture slow queries when threshold is null', function () {
     });
 });
 
-it('does not count queries when collect_queries is disabled', function () {
+it('does not count queries when db_collect_queries is disabled', function () {
     config([
         'observability-log.requests.channel' => 'test-channel',
-        'observability-log.requests.collect_queries' => false,
+        'observability-log.requests.db_collect_queries' => false,
     ]);
 
     $channel = Mockery::mock();
@@ -132,8 +132,8 @@ it('does not count queries when collect_queries is disabled', function () {
 it('caps the db_slow_queries array and appends a truncation marker', function () {
     config([
         'observability-log.requests.channel' => 'test-channel',
-        'observability-log.requests.slow_query_threshold' => 0,
-        'observability-log.requests.slow_queries_max_count' => 2,
+        'observability-log.requests.db_slow_query_threshold' => 0,
+        'observability-log.requests.db_slow_queries_max_count' => 2,
     ]);
 
     $channel = Mockery::mock();
@@ -162,11 +162,11 @@ it('caps the db_slow_queries array and appends a truncation marker', function ()
     });
 });
 
-it('accepts a numeric string for slow_queries_max_count (env-style config)', function () {
+it('accepts a numeric string for db_slow_queries_max_count (env-style config)', function () {
     config([
         'observability-log.requests.channel' => 'test-channel',
-        'observability-log.requests.slow_query_threshold' => 0,
-        'observability-log.requests.slow_queries_max_count' => '2',
+        'observability-log.requests.db_slow_query_threshold' => 0,
+        'observability-log.requests.db_slow_queries_max_count' => '2',
     ]);
 
     $channel = Mockery::mock();
@@ -196,8 +196,8 @@ it('accepts a numeric string for slow_queries_max_count (env-style config)', fun
 it('does not append a truncation marker when slow queries stay under the cap', function () {
     config([
         'observability-log.requests.channel' => 'test-channel',
-        'observability-log.requests.slow_query_threshold' => 0,
-        'observability-log.requests.slow_queries_max_count' => 50,
+        'observability-log.requests.db_slow_query_threshold' => 0,
+        'observability-log.requests.db_slow_queries_max_count' => 50,
     ]);
 
     $channel = Mockery::mock();
@@ -226,11 +226,11 @@ it('does not append a truncation marker when slow queries stay under the cap', f
     });
 });
 
-it('disables the slow query cap when slow_queries_max_count is null', function () {
+it('disables the slow query cap when db_slow_queries_max_count is null', function () {
     config([
         'observability-log.requests.channel' => 'test-channel',
-        'observability-log.requests.slow_query_threshold' => 0,
-        'observability-log.requests.slow_queries_max_count' => null,
+        'observability-log.requests.db_slow_query_threshold' => 0,
+        'observability-log.requests.db_slow_queries_max_count' => null,
     ]);
 
     $channel = Mockery::mock();

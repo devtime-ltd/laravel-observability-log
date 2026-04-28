@@ -58,7 +58,7 @@ it('counts database queries during a job attempt', function () {
 it('captures slow queries above threshold for jobs', function () {
     config([
         'observability-log.jobs.channel' => 'test',
-        'observability-log.jobs.slow_query_threshold' => 0,
+        'observability-log.jobs.db_slow_query_threshold' => 0,
     ]);
 
     $captured = null;
@@ -84,7 +84,7 @@ it('captures slow queries above threshold for jobs', function () {
 it('does not capture slow queries when threshold is null', function () {
     config([
         'observability-log.jobs.channel' => 'test',
-        'observability-log.jobs.slow_query_threshold' => null,
+        'observability-log.jobs.db_slow_query_threshold' => null,
     ]);
 
     $captured = null;
@@ -106,11 +106,11 @@ it('does not capture slow queries when threshold is null', function () {
     expect($captured)->not->toHaveKey('db_slow_queries');
 });
 
-it('caps slow queries via slow_queries_max_count and appends a truncation marker', function () {
+it('caps slow queries via db_slow_queries_max_count and appends a truncation marker', function () {
     config([
         'observability-log.jobs.channel' => 'test',
-        'observability-log.jobs.slow_query_threshold' => 0,
-        'observability-log.jobs.slow_queries_max_count' => 2,
+        'observability-log.jobs.db_slow_query_threshold' => 0,
+        'observability-log.jobs.db_slow_queries_max_count' => 2,
     ]);
 
     $captured = null;
@@ -254,10 +254,10 @@ it('does not track queries that fire outside an attempt window', function () {
     expect($captured['db_query_count'])->toBe(1);
 });
 
-it('omits db_* fields from attempt entries when collect_queries is disabled even with queries running', function () {
+it('omits db_* fields from attempt entries when db_collect_queries is disabled even with queries running', function () {
     config([
         'observability-log.jobs.channel' => 'test',
-        'observability-log.jobs.collect_queries' => false,
+        'observability-log.jobs.db_collect_queries' => false,
     ]);
 
     $captured = null;

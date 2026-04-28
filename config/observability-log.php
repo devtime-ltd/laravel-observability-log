@@ -86,14 +86,14 @@ return [
 
         'obfuscate_ip' => false, // false or callable, e.g. ObfuscateIp::level(2)
 
-        'collect_queries' => true,
+        'db_collect_queries' => true,
 
-        'slow_query_threshold' => 100, // null disables slow query collection
+        'db_slow_query_threshold' => 100, // null disables slow query collection
 
         // Cap the number of slow queries per request; a
         // ['truncated' => 'N more slow queries dropped'] marker is
         // appended when exceeded. null or 0 disables.
-        'slow_queries_max_count' => 100,
+        'db_slow_queries_max_count' => 100,
 
         'capture_headers' => env('OBSERVABILITY_LOG_CAPTURE_HEADERS', false),
 
@@ -174,14 +174,14 @@ return [
 
         'attempt_message' => 'job.attempt',
 
-        'collect_queries' => true,
+        'db_collect_queries' => true,
 
-        'slow_query_threshold' => 100, // null disables slow query collection
+        'db_slow_query_threshold' => 100, // null disables slow query collection
 
         // Cap the number of slow queries per attempt; a
         // ['truncated' => 'N more slow queries dropped'] marker is
         // appended when exceeded. null or 0 disables.
-        'slow_queries_max_count' => 100,
+        'db_slow_queries_max_count' => 100,
 
     ],
 

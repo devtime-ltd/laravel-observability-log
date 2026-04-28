@@ -402,9 +402,9 @@ class IntegrationTest extends TestCase
         $this->assertArrayNotHasKey('command', $exception->context);
     }
 
-    public function test_db_fields_omitted_when_collect_queries_disabled(): void
+    public function test_db_fields_omitted_when_db_collect_queries_disabled(): void
     {
-        config(['observability-log.requests.collect_queries' => false]);
+        config(['observability-log.requests.db_collect_queries' => false]);
 
         $this->get('/users')->assertOk();
 
