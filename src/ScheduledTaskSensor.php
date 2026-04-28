@@ -85,20 +85,34 @@ class ScheduledTaskSensor
             return;
         }
 
-        // For tasks defined with runInBackground(), Laravel still fires
-        // ScheduledTaskFinished from schedule:run after kicking off the
-        // child process - which means "spawned", not "completed". The
-        // real completion arrives on ScheduledBackgroundTaskFinished
-        // from a separate `schedule:finish` process. Drop this event
-        // and clean up any state so the kicked-off moment is not logged
-        // as the run.
-        if (! empty($event->task->runInBackground)) {
-            app(self::class)->dropTaskState($event->task);
+        $task = $event->task;
+        $status = self::statusFromExitCode($task);
+
+        if (! empty($task->runInBackground)) {
+            // For runInBackground() tasks, schedule:run fires
+            // ScheduledTaskFinished after spawning the child process and
+            // the real completion arrives on
+            // ScheduledBackgroundTaskFinished from a separate
+            // `schedule:finish` process - drop this kicked-off event
+            // and let the later one emit instead.
+            //
+            // Exception: when Event::run() short-circuited via
+            // shouldSkipDueToOverlapping (a race against another running
+            // instance after filtersPass let the task through), no
+            // background process was spawned, so schedule:finish never
+            // fires and BackgroundFinished never arrives. Emit the skip
+            // here so the run does not vanish.
+            $instance = app(self::class);
+            $instance->dropTaskState($task);
+
+            if ($status === 'skipped') {
+                self::emitWithoutMeasurements($event, $task, 'skipped');
+            }
 
             return;
         }
 
-        app(self::class)->emitTerminal($event, self::statusFromExitCode($event->task), null);
+        app(self::class)->emitTerminal($event, $status, null);
     }
 
     public static function recordBackgroundFinished(ScheduledBackgroundTaskFinished $event): void
@@ -194,6 +208,26 @@ class ScheduledTaskSensor
             'slowQueriesBaseline' => count($this->dbSlowQueries),
             'slowDroppedBaseline' => $this->dbSlowQueriesDropped,
         ];
+    }
+
+    private static function emitWithoutMeasurements(object $event, ScheduledEvent $task, string $status): void
+    {
+        try {
+            $entry = self::resolveEntry(
+                $event,
+                [],
+                fn () => self::buildEntry($task, $status, null, []),
+            );
+
+            self::dispatchEntry(
+                self::sensorConfig('channel'),
+                self::sensorConfig('level', 'info'),
+                self::resolveMessage($event, self::sensorConfig('message', 'schedule.task')),
+                $entry
+            );
+        } catch (Throwable $e) {
+            self::reportInternalError($e);
+        }
     }
 
     private function dropTaskState(ScheduledEvent $task): void
