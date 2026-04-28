@@ -85,7 +85,20 @@ class ScheduledTaskSensor
             return;
         }
 
-        app(self::class)->emitTerminal($event, 'success', null);
+        // For tasks defined with runInBackground(), Laravel still fires
+        // ScheduledTaskFinished from schedule:run after kicking off the
+        // child process - which means "spawned", not "completed". The
+        // real completion arrives on ScheduledBackgroundTaskFinished
+        // from a separate `schedule:finish` process. Drop this event
+        // and clean up any state so the kicked-off moment is not logged
+        // as the run.
+        if (! empty($event->task->runInBackground)) {
+            app(self::class)->dropTaskState($event->task);
+
+            return;
+        }
+
+        app(self::class)->emitTerminal($event, self::statusFromExitCode($event->task), null);
     }
 
     public static function recordBackgroundFinished(ScheduledBackgroundTaskFinished $event): void
@@ -94,7 +107,29 @@ class ScheduledTaskSensor
             return;
         }
 
-        app(self::class)->emitTerminal($event, 'success', null);
+        // schedule:finish runs in a separate PHP process from schedule:run,
+        // so there is no Starting state to correlate against. Emit a
+        // standalone entry with whatever metadata the rehydrated task
+        // exposes; duration / memory / db stats are unavailable here.
+        $task = $event->task;
+        $status = self::statusFromExitCode($task);
+
+        try {
+            $entry = self::resolveEntry(
+                $event,
+                [],
+                fn () => self::buildEntry($task, $status, null, []),
+            );
+
+            self::dispatchEntry(
+                self::sensorConfig('channel'),
+                self::sensorConfig('level', 'info'),
+                self::resolveMessage($event, self::sensorConfig('message', 'schedule.task')),
+                $entry
+            );
+        } catch (Throwable $e) {
+            self::reportInternalError($e);
+        }
     }
 
     public static function recordFailed(ScheduledTaskFailed $event): void
@@ -159,6 +194,28 @@ class ScheduledTaskSensor
             'slowQueriesBaseline' => count($this->dbSlowQueries),
             'slowDroppedBaseline' => $this->dbSlowQueriesDropped,
         ];
+    }
+
+    private function dropTaskState(ScheduledEvent $task): void
+    {
+        $key = spl_object_hash($task);
+
+        if (! isset($this->tasks[$key])) {
+            return;
+        }
+
+        unset($this->tasks[$key]);
+
+        if ($this->tasks === []) {
+            $this->resetQueryStats();
+        }
+    }
+
+    private static function statusFromExitCode(ScheduledEvent $task): string
+    {
+        $exitCode = $task->exitCode ?? null;
+
+        return ($exitCode === null || $exitCode === 0) ? 'success' : 'failed';
     }
 
     private function emitTerminal(object $event, string $status, ?Throwable $exception): void

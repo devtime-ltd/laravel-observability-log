@@ -94,23 +94,82 @@ describe('finished event', function () {
         ScheduledTaskSensor::recordFinished(new ScheduledTaskFinished(scheduledEvent(), 0.1));
     });
 
-    it('emits success on ScheduledBackgroundTaskFinished (runInBackground tasks)', function () {
+    it('emits status=failed when the task exitCode is non-zero', function () {
         config(['observability-log.schedule.channel' => 'test']);
 
-        $task = scheduledEvent('php artisan inspire', '*/5 * * * *', 'Background inspire');
+        $task = scheduledEvent();
+        $task->exitCode = 2;
 
         $channel = Mockery::mock();
         $channel->shouldReceive('log')
             ->once()
-            ->withArgs(function (string $level, string $message, array $context) {
-                return $context['task'] === 'Background inspire'
-                    && $context['status'] === 'success'
-                    && is_float($context['duration_ms']);
-            });
+            ->withArgs(fn ($level, $message, $context) => $context['status'] === 'failed');
 
         Log::shouldReceive('channel')->with('test')->andReturn($channel);
 
         ScheduledTaskSensor::recordStarting(new ScheduledTaskStarting($task));
+        ScheduledTaskSensor::recordFinished(new ScheduledTaskFinished($task, 0.1));
+    });
+
+    it('drops the kicked-off ScheduledTaskFinished for runInBackground tasks', function () {
+        // For background tasks Laravel fires ScheduledTaskFinished right
+        // after spawning the child process (not on real completion);
+        // logging that here would be misleading, so it should be dropped.
+        config(['observability-log.schedule.channel' => 'test']);
+
+        $task = scheduledEvent();
+        $task->runInBackground = true;
+
+        Log::shouldReceive('channel')->never();
+
+        ScheduledTaskSensor::recordStarting(new ScheduledTaskStarting($task));
+        ScheduledTaskSensor::recordFinished(new ScheduledTaskFinished($task, 0.1));
+
+        // State is cleaned up so the next foreground task starts clean.
+        $instance = app(ScheduledTaskSensor::class);
+        expect((function () {
+            return $this->tasks;
+        })->call($instance))->toBe([]);
+    });
+});
+
+describe('background completion event', function () {
+    it('emits a standalone entry from ScheduledBackgroundTaskFinished without prior Starting state', function () {
+        // schedule:finish runs in a separate PHP process from schedule:run,
+        // so we should not require a Starting event in this process to
+        // emit. Status comes from the task's exitCode.
+        config(['observability-log.schedule.channel' => 'test']);
+
+        $task = scheduledEvent('php artisan inspire', '*/5 * * * *', 'Background inspire');
+        $task->exitCode = 0;
+
+        $channel = Mockery::mock();
+        $channel->shouldReceive('log')
+            ->once()
+            ->withArgs(function ($level, $message, $context) {
+                return $context['task'] === 'Background inspire'
+                    && $context['status'] === 'success'
+                    && ! array_key_exists('duration_ms', $context);
+            });
+
+        Log::shouldReceive('channel')->with('test')->andReturn($channel);
+
+        ScheduledTaskSensor::recordBackgroundFinished(new ScheduledBackgroundTaskFinished($task));
+    });
+
+    it('reports status=failed when the background task exited non-zero', function () {
+        config(['observability-log.schedule.channel' => 'test']);
+
+        $task = scheduledEvent();
+        $task->exitCode = 1;
+
+        $channel = Mockery::mock();
+        $channel->shouldReceive('log')
+            ->once()
+            ->withArgs(fn ($level, $message, $context) => $context['status'] === 'failed');
+
+        Log::shouldReceive('channel')->with('test')->andReturn($channel);
+
         ScheduledTaskSensor::recordBackgroundFinished(new ScheduledBackgroundTaskFinished($task));
     });
 });
