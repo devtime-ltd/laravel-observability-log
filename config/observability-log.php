@@ -152,4 +152,37 @@ return [
 
     ],
 
+    /*
+    |--------------------------------------------------------------------------
+    | Job logging
+    |--------------------------------------------------------------------------
+    |
+    | Channel enables structured logging of queue lifecycle events.
+    | Emits "job.queued" when a job is dispatched and "job.attempt"
+    | once per worker attempt (whether it succeeds or fails). Leave
+    | unset to disable.
+    |
+    */
+
+    'jobs' => [
+
+        'channel' => env('OBSERVABILITY_LOG_CHANNEL'),
+
+        'level' => 'info',
+
+        'queued_message' => 'job.queued',
+
+        'attempt_message' => 'job.attempt',
+
+        'collect_queries' => true,
+
+        'slow_query_threshold' => 100, // null disables slow query collection
+
+        // Cap the number of slow queries per attempt; a
+        // ['truncated' => 'N more slow queries dropped'] marker is
+        // appended when exceeded. null or 0 disables.
+        'slow_queries_max_count' => 100,
+
+    ],
+
 ];

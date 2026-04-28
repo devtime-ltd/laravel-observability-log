@@ -3,11 +3,16 @@
 namespace DevtimeLtd\LaravelObservabilityLog\Tests;
 
 use DevtimeLtd\LaravelObservabilityLog\ExceptionSensor;
+use DevtimeLtd\LaravelObservabilityLog\JobSensor;
 use DevtimeLtd\LaravelObservabilityLog\ObfuscateIp;
 use DevtimeLtd\LaravelObservabilityLog\RequestSensor;
+use DevtimeLtd\LaravelObservabilityLog\Tests\Fixtures\IntegrationTestJob;
 use Illuminate\Contracts\Debug\ExceptionHandler;
+use Illuminate\Queue\Events\JobQueued;
 use Illuminate\Support\Facades\Context;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Event;
+use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Facades\Schema;
 use Monolog\Handler\TestHandler;
 use Monolog\LogRecord;
@@ -18,6 +23,7 @@ class IntegrationTest extends TestCase
     {
         $app['config']->set('observability-log.requests.channel', 'test-observability');
         $app['config']->set('observability-log.exceptions.channel', 'test-observability');
+        $app['config']->set('observability-log.jobs.channel', 'test-observability');
         $app['config']->set('logging.channels.test-observability', [
             'driver' => 'monolog',
             'handler' => TestHandler::class,
@@ -27,6 +33,7 @@ class IntegrationTest extends TestCase
             'driver' => 'sqlite',
             'database' => ':memory:',
         ]);
+        $app['config']->set('queue.default', 'sync');
     }
 
     protected function defineRoutes($router): void
@@ -58,6 +65,10 @@ class IntegrationTest extends TestCase
         ExceptionSensor::using(null);
         ExceptionSensor::extend(null);
         ExceptionSensor::message(null);
+        JobSensor::using(null);
+        JobSensor::extend(null);
+        JobSensor::message(null);
+        $this->app->forgetInstance(JobSensor::class);
         Context::flush();
 
         Schema::create('users', function ($table) {
@@ -429,5 +440,109 @@ class IntegrationTest extends TestCase
         // 1 frame + the truncation marker
         $this->assertCount(2, $trace);
         $this->assertArrayHasKey('truncated', end($trace));
+    }
+
+    public function test_job_sensor_logs_attempt_when_sync_job_is_dispatched(): void
+    {
+        Queue::push(new IntegrationTestJob);
+
+        $record = $this->recordWithMessage('job.attempt');
+
+        $this->assertNotNull($record);
+        $this->assertSame('processed', $record->context['status']);
+        $this->assertSame('sync', $record->context['connection']);
+        $this->assertIsFloat($record->context['duration_ms']);
+        $this->assertArrayNotHasKey('exception', $record->context);
+    }
+
+    public function test_job_sensor_tracks_db_queries_during_sync_job(): void
+    {
+        Queue::push(new IntegrationTestJob(runQuery: true));
+
+        $record = $this->recordWithMessage('job.attempt');
+
+        $this->assertNotNull($record);
+        $this->assertSame(1, $record->context['db_query_count']);
+        $this->assertIsFloat($record->context['db_query_total_ms']);
+    }
+
+    public function test_job_sensor_logs_queued_event_via_dispatched_event(): void
+    {
+        Event::dispatch(new JobQueued('redis', 'default', 'job-77', new \stdClass, '{}', null));
+
+        $record = $this->recordWithMessage('job.queued');
+
+        $this->assertNotNull($record);
+        $this->assertSame('stdClass', $record->context['class']);
+        $this->assertSame('default', $record->context['queue']);
+        $this->assertSame('redis', $record->context['connection']);
+        $this->assertSame('job-77', $record->context['job_id']);
+    }
+
+    public function test_job_sensor_failed_event_emits_failure_status(): void
+    {
+        $exception = null;
+
+        try {
+            Queue::push(new Fixtures\ThrowingJob);
+        } catch (\Throwable $e) {
+            $exception = $e;
+        }
+
+        $this->assertNotNull($exception, 'Sync queue should have re-thrown the job exception');
+
+        $record = $this->recordWithMessage('job.attempt');
+
+        $this->assertNotNull($record);
+        $this->assertSame('failed', $record->context['status']);
+        $this->assertSame(\RuntimeException::class, $record->context['exception']['class']);
+        $this->assertSame('boom from job', $record->context['exception']['message']);
+    }
+
+    public function test_request_and_job_share_trace_id_when_context_is_set_during_request(): void
+    {
+        $this->app['router']->middleware(RequestSensor::class)->get('/dispatch-job', function () {
+            Context::add('trace_id', 'shared-job-tid');
+            Queue::push(new IntegrationTestJob);
+
+            return response()->json(['ok' => true]);
+        });
+
+        $this->get('/dispatch-job')->assertOk();
+
+        $requestRecord = $this->recordWithMessage('http.request');
+        $jobRecord = $this->recordWithMessage('job.attempt');
+
+        $this->assertNotNull($requestRecord);
+        $this->assertNotNull($jobRecord);
+        $this->assertSame('shared-job-tid', $requestRecord->context['trace_id']);
+        $this->assertSame('shared-job-tid', $jobRecord->context['trace_id']);
+    }
+
+    public function test_job_sensor_disabled_when_jobs_channel_is_unset(): void
+    {
+        config(['observability-log.jobs.channel' => null]);
+
+        Queue::push(new IntegrationTestJob);
+
+        $this->assertNull($this->recordWithMessage('job.attempt'));
+    }
+
+    public function test_job_query_listener_registers_exactly_once_across_attempts(): void
+    {
+        Queue::push(new IntegrationTestJob(runQuery: true));
+        Queue::push(new IntegrationTestJob(runQuery: true));
+        Queue::push(new IntegrationTestJob(runQuery: true));
+
+        $records = array_values(array_filter(
+            $this->records(),
+            fn ($record) => $record->message === 'job.attempt'
+        ));
+
+        $this->assertCount(3, $records);
+
+        foreach ($records as $record) {
+            $this->assertSame(1, $record->context['db_query_count']);
+        }
     }
 }
