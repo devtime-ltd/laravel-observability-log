@@ -889,10 +889,10 @@ describe('message callback', function () {
 });
 
 describe('level config', function () {
-    it('uses level from config', function () {
+    it('uses failed_level from config (every exception is a failure)', function () {
         config([
             'observability-log.exceptions.channel' => 'test-channel',
-            'observability-log.exceptions.level' => 'critical',
+            'observability-log.exceptions.failed_level' => 'critical',
         ]);
 
         $channel = Mockery::mock();
