@@ -410,7 +410,9 @@ CommandSensor::message(fn (CommandFinished $event) => 'cmd.'.$event->command);
 
 `ScheduledTaskSensor` listens to Laravel's `ScheduledTaskStarting`, `ScheduledTaskFinished`, `ScheduledTaskFailed`, and `ScheduledTaskSkipped` events and emits one `schedule.task` entry per scheduled task execution. Registration is automatic through the service provider.
 
-`status` is one of `success`, `failed`, or `skipped`. A skipped entry is emitted when a task was due but a filter (e.g. `withoutOverlapping()`, `when(...)`, `skip(...)`) prevented it from running, so you can still see the schedule was evaluated.
+`status` is one of `success`, `failed`, or `skipped`. A skipped entry is emitted when a task was due but a filter (e.g. `withoutOverlapping()`, `when(...)`, `skip(...)`) prevented it from running, so you can still see the schedule was evaluated. `failed` covers both thrown exceptions and non-zero exit codes from the underlying command.
+
+For tasks defined with `runInBackground()`, the completion entry comes from a separate `php artisan schedule:finish` process; the per-attempt `duration_ms`, `memory_peak_mb`, and `db_*` fields are only available for foreground runs.
 
 ### Logged fields
 
