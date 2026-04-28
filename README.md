@@ -9,6 +9,7 @@ Ships five sensors today (`RequestSensor`, `ExceptionSensor`, `JobSensor`, `Comm
 - **Lean defaults.** Every sensor ships with the fields most useful for filtering and aggregation, nothing more.
 - **Opinionated top-level keys.** Common filter fields are promoted out of nested structures so dashboard queries hit a single key.
 - **Richer collection via config.** Header capture, structured stack traces with argument values, slow query capture, and similar are opt-in.
+- **Defaults surface what needs action.** Entries representing a failure (failed job attempts, non-zero command exits, failed scheduled tasks, 5xx responses, unhandled exceptions) log at `failed_level` (default `error`); routine traffic uses `level` (default `info`).
 
 ## Installation
 
@@ -72,7 +73,7 @@ return [
 ];
 ```
 
-`level` is the default for every entry. `failed_level` is used instead when a sensor emits an entry with `status: failed` (a failed job attempt, a non-zero command exit, a failed scheduled task), on `RequestSensor` for 5xx responses, and on every `ExceptionSensor` entry (since every exception is by definition a failure). `capture_headers` only applies to sensors that read it (request and exception). The `db_*` keys only apply to sensors that track DB stats (request, job, command, scheduled task).
+`level` is the default for every entry. `failed_level` is used instead when a sensor emits an entry with `status: failed` (a failed job attempt, a non-zero command exit, a failed scheduled task), on `RequestSensor` for 5xx responses, and on every `ExceptionSensor` entry (every unhandled exception is considered a failure). `capture_headers` only applies to sensors that read it (request and exception). The `db_*` keys only apply to sensors that track DB stats (request, job, command, scheduled task).
 
 ## Request sensor
 
@@ -226,7 +227,7 @@ Suppress specific exception classes (subclasses are matched via `is_a()`):
 ],
 ```
 
-Exception entries log at `failed_level` (default `error`) since every exception is a failure. Override via `observability-log.exceptions.failed_level` or the top-level `observability-log.failed_level`.
+Exception entries log at `failed_level` (default `error`) since every unhandled exception is considered a failure. Override via `observability-log.exceptions.failed_level` or the top-level `observability-log.failed_level`.
 
 ### Customising the entry
 

@@ -33,11 +33,12 @@ return [
     | Failure log level
     |--------------------------------------------------------------------------
     |
-    | PSR-3 level used when a sensor emits an entry with status "failed"
-    | (a failed job attempt, a non-zero command exit code, a failed
-    | scheduled task, etc.). Sensors that do not have a failure state
-    | (RequestSensor, ExceptionSensor) ignore this and always use
-    | "level". Override per sensor by setting "failed_level" inside
+    | PSR-3 level used for entries that represent a failure: a failed
+    | job attempt, a non-zero command exit, a failed scheduled task,
+    | a 5xx HTTP response (RequestSensor), or any exception reported
+    | through Laravel's exception handler (ExceptionSensor uses this
+    | for every entry; every unhandled exception is considered a
+    | failure). Override per sensor by setting "failed_level" inside
     | that sensor's section.
     |
     */
