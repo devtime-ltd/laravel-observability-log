@@ -476,10 +476,10 @@ describe('failed events', function () {
 });
 
 describe('query tracking', function () {
-    it('omits db_* fields when collect_queries is disabled', function () {
+    it('omits db_* fields when db_collect_queries is disabled', function () {
         config([
             'observability-log.jobs.channel' => 'test',
-            'observability-log.jobs.collect_queries' => false,
+            'observability-log.jobs.db_collect_queries' => false,
         ]);
 
         $job = fakeJob();
@@ -501,7 +501,7 @@ describe('query tracking', function () {
     it('includes zeroed db fields when no queries ran but collection is on', function () {
         config([
             'observability-log.jobs.channel' => 'test',
-            'observability-log.jobs.collect_queries' => true,
+            'observability-log.jobs.db_collect_queries' => true,
         ]);
 
         $job = fakeJob();

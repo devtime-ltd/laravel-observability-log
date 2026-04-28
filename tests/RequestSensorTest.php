@@ -596,7 +596,7 @@ describe('using callback', function () {
     it('receives measurements without query fields when queries disabled', function () {
         config([
             'observability-log.requests.channel' => 'test-channel',
-            'observability-log.requests.collect_queries' => false,
+            'observability-log.requests.db_collect_queries' => false,
         ]);
 
         RequestSensor::using(function (Request $request, ?Response $response, array $measurements) {
@@ -718,10 +718,10 @@ describe('config options', function () {
         expect($response->getStatusCode())->toBe(200);
     });
 
-    it('omits query fields when collect_queries is disabled', function () {
+    it('omits query fields when db_collect_queries is disabled', function () {
         config([
             'observability-log.requests.channel' => 'test-channel',
-            'observability-log.requests.collect_queries' => false,
+            'observability-log.requests.db_collect_queries' => false,
         ]);
 
         $channel = Mockery::mock();

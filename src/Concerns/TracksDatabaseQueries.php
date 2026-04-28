@@ -33,7 +33,7 @@ trait TracksDatabaseQueries
 
     protected function loadQueryConfig(): void
     {
-        $this->collectQueries = (bool) config(static::queryConfigPath().'.collect_queries');
+        $this->collectQueries = (bool) config(static::queryConfigPath().'.db_collect_queries');
 
         if ($this->collectQueries) {
             $this->slowQueryThreshold = self::resolveSlowQueryThreshold();
@@ -131,7 +131,7 @@ trait TracksDatabaseQueries
 
     private static function resolveSlowQueryThreshold(): ?int
     {
-        $value = config(static::queryConfigPath().'.slow_query_threshold');
+        $value = config(static::queryConfigPath().'.db_slow_query_threshold');
 
         if ($value === null || $value === false) {
             return null;
@@ -142,7 +142,7 @@ trait TracksDatabaseQueries
 
     private static function resolveSlowQueriesMaxCount(): ?int
     {
-        $value = config(static::queryConfigPath().'.slow_queries_max_count');
+        $value = config(static::queryConfigPath().'.db_slow_queries_max_count');
 
         if ($value === null || $value === false) {
             return null;
