@@ -106,7 +106,10 @@ class RequestSensor
     private function log(Request $request, ?Response $response, float $elapsed): void
     {
         try {
-            $level = self::sensorConfig('level', 'info');
+            $statusCode = $response?->getStatusCode();
+            $level = self::levelForStatus(
+                $statusCode !== null && $statusCode >= 500 ? 'failed' : 'success'
+            );
 
             $measurements = $this->measurements($elapsed);
 

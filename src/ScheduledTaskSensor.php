@@ -183,7 +183,7 @@ class ScheduledTaskSensor
 
             self::dispatchEntry(
                 self::sensorConfig('channel'),
-                self::sensorConfig('level', 'info'),
+                self::levelForStatus($status),
                 self::resolveMessage($event, self::sensorConfig('message', 'schedule.task')),
                 $entry
             );
@@ -251,7 +251,7 @@ class ScheduledTaskSensor
 
             self::dispatchEntry(
                 self::sensorConfig('channel'),
-                self::sensorConfig('level', 'info'),
+                self::levelForStatus($status),
                 self::resolveMessage($event, self::sensorConfig('message', 'schedule.task')),
                 $entry
             );
@@ -316,6 +316,7 @@ class ScheduledTaskSensor
             'task' => self::stringOrNull($task->getSummaryForDisplay()),
             'expression' => self::stringOrNull($task->getExpression()),
             'status' => $status,
+            'run_in_background' => (bool) ($task->runInBackground ?? false),
         ];
 
         $timezone = $task->timezone ?? null;

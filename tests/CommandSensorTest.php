@@ -308,6 +308,38 @@ describe('message callback', function () {
     });
 });
 
+describe('failed_level config', function () {
+    it('uses failed_level (default error) for non-zero exit codes', function () {
+        config(['observability-log.commands.channel' => 'test']);
+
+        $channel = Mockery::mock();
+        $channel->shouldReceive('log')
+            ->once()
+            ->withArgs(fn ($level, $message, $context) => $level === 'error' && $context['status'] === 'failed');
+
+        Log::shouldReceive('channel')->with('test')->andReturn($channel);
+
+        $input = new ArrayInput([]);
+        CommandSensor::recordStarting(commandStarting('migrate', $input));
+        CommandSensor::recordFinished(commandFinished('migrate', 1, $input));
+    });
+
+    it('keeps successful exits on the regular level', function () {
+        config(['observability-log.commands.channel' => 'test']);
+
+        $channel = Mockery::mock();
+        $channel->shouldReceive('log')
+            ->once()
+            ->withArgs(fn ($level, $message, $context) => $level === 'info' && $context['status'] === 'success');
+
+        Log::shouldReceive('channel')->with('test')->andReturn($channel);
+
+        $input = new ArrayInput([]);
+        CommandSensor::recordStarting(commandStarting('migrate', $input));
+        CommandSensor::recordFinished(commandFinished('migrate', 0, $input));
+    });
+});
+
 describe('level config', function () {
     it('uses level from config', function () {
         config([

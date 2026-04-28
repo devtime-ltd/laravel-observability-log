@@ -9,6 +9,25 @@ use Throwable;
 trait EmitsEntries
 {
     /**
+     * Resolve the PSR-3 level for an entry given its status. Sensors
+     * with a binary success/failure shape (jobs, commands, scheduled
+     * tasks) use "failed_level" for status === "failed" entries and
+     * "level" for everything else.
+     */
+    protected static function levelForStatus(string $status): string
+    {
+        if ($status === 'failed') {
+            $value = self::sensorConfig('failed_level', 'error');
+
+            return is_string($value) && $value !== '' ? $value : 'error';
+        }
+
+        $value = self::sensorConfig('level', 'info');
+
+        return is_string($value) && $value !== '' ? $value : 'info';
+    }
+
+    /**
      * Read a sensor-section config key, falling back to the same key at
      * the package's top level. Sensor-level wins when present even if
      * set to null or false (so an explicit override beats a top-level
