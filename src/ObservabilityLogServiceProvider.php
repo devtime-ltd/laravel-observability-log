@@ -4,6 +4,10 @@ namespace DevtimeLtd\LaravelObservabilityLog;
 
 use Illuminate\Console\Events\CommandFinished;
 use Illuminate\Console\Events\CommandStarting;
+use Illuminate\Console\Events\ScheduledTaskFailed;
+use Illuminate\Console\Events\ScheduledTaskFinished;
+use Illuminate\Console\Events\ScheduledTaskSkipped;
+use Illuminate\Console\Events\ScheduledTaskStarting;
 use Illuminate\Contracts\Debug\ExceptionHandler;
 use Illuminate\Database\Events\QueryExecuted;
 use Illuminate\Queue\Events\JobExceptionOccurred;
@@ -26,6 +30,7 @@ class ObservabilityLogServiceProvider extends ServiceProvider
 
         $this->app->singleton(JobSensor::class);
         $this->app->singleton(CommandSensor::class);
+        $this->app->singleton(ScheduledTaskSensor::class);
     }
 
     public function boot(): void
@@ -51,6 +56,11 @@ class ObservabilityLogServiceProvider extends ServiceProvider
         Event::listen(CommandStarting::class, [CommandSensor::class, 'recordStarting']);
         Event::listen(CommandFinished::class, [CommandSensor::class, 'recordFinished']);
 
+        Event::listen(ScheduledTaskStarting::class, [ScheduledTaskSensor::class, 'recordStarting']);
+        Event::listen(ScheduledTaskFinished::class, [ScheduledTaskSensor::class, 'recordFinished']);
+        Event::listen(ScheduledTaskFailed::class, [ScheduledTaskSensor::class, 'recordFailed']);
+        Event::listen(ScheduledTaskSkipped::class, [ScheduledTaskSensor::class, 'recordSkipped']);
+
         $this->registerSharedQueryListener();
     }
 
@@ -64,6 +74,7 @@ class ObservabilityLogServiceProvider extends ServiceProvider
             RequestSensor::recordQuery($query);
             JobSensor::recordQuery($query);
             CommandSensor::recordQuery($query);
+            ScheduledTaskSensor::recordQuery($query);
         });
 
         $this->app->instance(self::QUERY_LISTENER_BINDING, true);

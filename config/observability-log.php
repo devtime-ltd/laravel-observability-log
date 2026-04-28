@@ -233,4 +233,21 @@ return [
 
     ],
 
+    /*
+    |--------------------------------------------------------------------------
+    | Scheduled task logging
+    |--------------------------------------------------------------------------
+    |
+    | Emits "schedule.task" once per scheduled task execution: status
+    | success, failed, or skipped (when the task was due but a filter
+    | such as withoutOverlapping prevented it from running).
+    |
+    */
+
+    'schedule' => [
+
+        'message' => 'schedule.task',
+
+    ],
+
 ];
