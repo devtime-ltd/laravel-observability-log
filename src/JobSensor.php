@@ -20,6 +20,8 @@ class JobSensor
     use EmitsEntries;
     use TracksDatabaseQueries;
 
+    protected const CONFIG_PATH = 'observability-log.jobs';
+
     /** @var (Closure(object, array<string, mixed>): array<string, mixed>)|null */
     private static ?Closure $usingCallback = null;
 
@@ -74,7 +76,7 @@ class JobSensor
 
     public static function recordQueued(JobQueued $event): void
     {
-        if (self::normaliseChannels(config('observability-log.jobs.channel')) === []) {
+        if (self::normaliseChannels(self::sensorConfig('channel')) === []) {
             return;
         }
 
@@ -86,9 +88,9 @@ class JobSensor
             );
 
             self::dispatchEntry(
-                config('observability-log.jobs.channel'),
-                config('observability-log.jobs.level'),
-                self::resolveMessage($event, config('observability-log.jobs.queued_message')),
+                self::sensorConfig('channel'),
+                self::sensorConfig('level', 'info'),
+                self::resolveMessage($event, self::sensorConfig('queued_message', 'job.queued')),
                 $entry
             );
         } catch (Throwable $e) {
@@ -98,7 +100,7 @@ class JobSensor
 
     public static function recordProcessing(JobProcessing $event): void
     {
-        if (self::normaliseChannels(config('observability-log.jobs.channel')) === []) {
+        if (self::normaliseChannels(self::sensorConfig('channel')) === []) {
             return;
         }
 
@@ -107,7 +109,7 @@ class JobSensor
 
     public static function recordProcessed(JobProcessed $event): void
     {
-        if (self::normaliseChannels(config('observability-log.jobs.channel')) === []) {
+        if (self::normaliseChannels(self::sensorConfig('channel')) === []) {
             return;
         }
 
@@ -116,7 +118,7 @@ class JobSensor
 
     public static function recordExceptionOccurred(JobExceptionOccurred $event): void
     {
-        if (self::normaliseChannels(config('observability-log.jobs.channel')) === []) {
+        if (self::normaliseChannels(self::sensorConfig('channel')) === []) {
             return;
         }
 
@@ -125,7 +127,7 @@ class JobSensor
 
     public static function recordFailed(JobFailed $event): void
     {
-        if (self::normaliseChannels(config('observability-log.jobs.channel')) === []) {
+        if (self::normaliseChannels(self::sensorConfig('channel')) === []) {
             return;
         }
 
@@ -141,11 +143,6 @@ class JobSensor
         }
 
         $instance->trackQuery($query);
-    }
-
-    protected static function queryConfigPath(): string
-    {
-        return 'observability-log.jobs';
     }
 
     private function onProcessing(JobProcessing $event): void
@@ -194,9 +191,9 @@ class JobSensor
             );
 
             self::dispatchEntry(
-                config('observability-log.jobs.channel'),
-                config('observability-log.jobs.level'),
-                self::resolveMessage($event, config('observability-log.jobs.attempt_message')),
+                self::sensorConfig('channel'),
+                self::sensorConfig('level', 'info'),
+                self::resolveMessage($event, self::sensorConfig('attempt_message', 'job.attempt')),
                 $entry
             );
         } catch (Throwable $e) {

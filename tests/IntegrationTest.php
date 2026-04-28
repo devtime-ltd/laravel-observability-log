@@ -2,6 +2,7 @@
 
 namespace DevtimeLtd\LaravelObservabilityLog\Tests;
 
+use DevtimeLtd\LaravelObservabilityLog\CommandSensor;
 use DevtimeLtd\LaravelObservabilityLog\ExceptionSensor;
 use DevtimeLtd\LaravelObservabilityLog\JobSensor;
 use DevtimeLtd\LaravelObservabilityLog\ObfuscateIp;
@@ -69,6 +70,10 @@ class IntegrationTest extends TestCase
         JobSensor::extend(null);
         JobSensor::message(null);
         $this->app->forgetInstance(JobSensor::class);
+        CommandSensor::using(null);
+        CommandSensor::extend(null);
+        CommandSensor::message(null);
+        $this->app->forgetInstance(CommandSensor::class);
         Context::flush();
 
         Schema::create('users', function ($table) {
@@ -353,9 +358,9 @@ class IntegrationTest extends TestCase
         $this->assertIsArray($record->context['trace']);
     }
 
-    public function test_trace_max_bytes_truncates_long_traces(): void
+    public function test_trace_string_max_bytes_truncates_long_traces(): void
     {
-        config(['observability-log.exceptions.trace_max_bytes' => 50]);
+        config(['observability-log.exceptions.trace_string_max_bytes' => 50]);
 
         $handler = app(ExceptionHandler::class);
         $handler->report(new \RuntimeException('boom'));
@@ -548,5 +553,36 @@ class IntegrationTest extends TestCase
         foreach ($records as $record) {
             $this->assertSame(1, $record->context['db_query_count']);
         }
+    }
+
+    public function test_command_sensor_logs_artisan_command_via_service_provider(): void
+    {
+        config(['observability-log.commands.channel' => 'test-observability']);
+
+        $this->app[\Illuminate\Contracts\Console\Kernel::class]->rerouteSymfonyCommandEvents();
+
+        $this->artisan('list')->assertSuccessful();
+
+        $record = $this->recordWithMessage('console.command');
+
+        $this->assertNotNull($record);
+        $this->assertSame('list', $record->context['command']);
+        $this->assertSame(0, $record->context['exit_code']);
+        $this->assertSame('success', $record->context['status']);
+        $this->assertIsFloat($record->context['duration_ms']);
+    }
+
+    public function test_command_sensor_skips_ignored_commands(): void
+    {
+        config([
+            'observability-log.commands.channel' => 'test-observability',
+            'observability-log.commands.ignore' => ['list'],
+        ]);
+
+        $this->app[\Illuminate\Contracts\Console\Kernel::class]->rerouteSymfonyCommandEvents();
+
+        $this->artisan('list')->assertSuccessful();
+
+        $this->assertNull($this->recordWithMessage('console.command'));
     }
 }

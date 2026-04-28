@@ -2,7 +2,7 @@
 
 A set of sensors that emit structured events through Laravel log channels. Whatever log driver you use (stack, Axiom, Better Stack, Papertrail, stderr) doubles as your observability pipeline.
 
-Ships three sensors today (`RequestSensor`, `ExceptionSensor`, `JobSensor`), with more on the [roadmap](#roadmap).
+Ships four sensors today (`RequestSensor`, `ExceptionSensor`, `JobSensor`, `CommandSensor`), with more on the [roadmap](#roadmap).
 
 ## Design philosophy
 
@@ -46,7 +46,7 @@ php artisan vendor:publish --tag=observability-log
 
 ### Enabling and disabling sensors
 
-Each sensor's `channel` is its on/off switch. Set it to `null` to silence one sensor; the underlying queue and exception listeners stay registered but skip emission. Example, keep request and exception logging, drop job logging:
+Each sensor's `channel` is its on/off switch. Set it to `null` to silence one sensor; the underlying queue, console, and exception listeners stay registered but skip emission. Example, keep request and exception logging, drop job logging:
 
 ```php
 'jobs' => [
@@ -54,6 +54,24 @@ Each sensor's `channel` is its on/off switch. Set it to `null` to silence one se
     // ...
 ],
 ```
+
+### Shared defaults
+
+The package defines a handful of keys at the top level of the config that every sensor inherits. Override per sensor by setting the same key inside that sensor's section.
+
+```php
+return [
+    'channel' => env('OBSERVABILITY_LOG_CHANNEL'),
+    'level' => 'info',
+    'capture_headers' => env('OBSERVABILITY_LOG_CAPTURE_HEADERS', false),
+    'db_collect_queries' => true,
+    'db_slow_query_threshold' => 100,
+    'db_slow_queries_max_count' => 100,
+    // ...
+];
+```
+
+`capture_headers` only applies to sensors that read it (request and exception). The `db_*` keys only apply to sensors that track DB stats (request, job, command).
 
 ## Request sensor
 
@@ -91,18 +109,12 @@ Each sensor's `channel` is its on/off switch. Set it to `null` to silence one se
 
 ```php
 'requests' => [
-    'channel' => env('OBSERVABILITY_LOG_CHANNEL'),
     'message' => 'http.request',
-    'level' => 'info',
     'obfuscate_ip' => false, // false or callable, e.g. ObfuscateIp::level(2)
-    'db_collect_queries' => true,
-    'db_slow_query_threshold' => 100, // null to disable slow query collection
-    'db_slow_queries_max_count' => 100, // null or 0 to disable the cap
-    'capture_headers' => env('OBSERVABILITY_LOG_CAPTURE_HEADERS', false),
 ],
 ```
 
-`db_collect_queries` toggles the DB stats fields entirely. `db_slow_query_threshold` is in milliseconds and only affects slow capture, not counts. `db_slow_queries_max_count` caps slow queries per request and appends `['truncated' => 'N more slow queries dropped']` once exceeded.
+Inherits the shared `channel`, `level`, `capture_headers`, and `db_*` defaults; override any of them by setting the same key inside this section.
 
 ### IP obfuscation
 
@@ -191,14 +203,14 @@ Config controls:
     'trace' => true,                    // false to omit the field
     'trace_args' => false,              // true: structured array with arg values
     'trace_args_max_frames' => 50,      // null to disable the cap
-    'trace_max_bytes' => 16384,         // null to disable the cap
+    'trace_string_max_bytes' => 16384,         // null to disable the cap
     'previous_max_depth' => 3,          // null: unbounded, 0: omit, positive: cap
 ],
 ```
 
 `trace_args` requires `zend.exception_ignore_args=Off` in `php.ini`; PHP strips arg values from `Throwable::getTrace()` when it is `On` (the PHP 7.4+ default).
 
-When `trace_max_bytes` is hit, the string is cut at the last frame boundary and a `... [truncated at N bytes]` marker is appended. When `trace_args_max_frames` is hit, a `['truncated' => 'after N frames']` marker is appended to the array.
+When `trace_string_max_bytes` is hit, the string is cut at the last frame boundary and a `... [truncated at N bytes]` marker is appended. When `trace_args_max_frames` is hit, a `['truncated' => 'after N frames']` marker is appended to the array.
 
 ### Ignore list
 
@@ -213,15 +225,7 @@ Suppress specific exception classes (subclasses are matched via `is_a()`):
 ],
 ```
 
-### Log level
-
-Default: `'error'`. All PSR-3 levels are valid.
-
-```php
-'exceptions' => [
-    'level' => 'critical',
-],
-```
+Default level for exception entries is `error` (the only sensor that overrides the shared `info` default). Override via `observability-log.exceptions.level`.
 
 ### Customising the entry
 
@@ -295,17 +299,12 @@ Registration is automatic through the service provider; no `bootstrap/app.php` c
 
 ```php
 'jobs' => [
-    'channel' => env('OBSERVABILITY_LOG_CHANNEL'),
-    'level' => 'info',
     'queued_message' => 'job.queued',
     'attempt_message' => 'job.attempt',
-    'db_collect_queries' => true,
-    'db_slow_query_threshold' => 100, // null to disable slow query collection
-    'db_slow_queries_max_count' => 100, // null or 0 to disable the cap
 ],
 ```
 
-The `db_*` keys behave the same as on the request sensor, scoped per attempt.
+Inherits the shared `channel`, `level`, and `db_*` defaults. The `db_*` keys behave the same as on the request sensor, scoped per attempt.
 
 ### Failed attempts
 
@@ -344,6 +343,67 @@ JobSensor::using(function ($event, array $measurements) {
 
 // Customise the log message
 JobSensor::message(fn ($event) => $event instanceof JobQueued ? 'queue.dispatched' : 'queue.attempted');
+```
+
+## Command sensor
+
+`CommandSensor` listens to Laravel's `CommandStarting` and `CommandFinished` events and emits one `console.command` entry per Artisan command invocation (success or failure). Registration is automatic through the service provider; no `bootstrap/app.php` change required.
+
+### Logged fields
+
+| Field               | Description                                                       |
+| ------------------- | ----------------------------------------------------------------- |
+| `command`           | Command name, e.g. `migrate`                                      |
+| `exit_code`         | Integer exit code (0 on success)                                  |
+| `status`            | `success` when `exit_code` is 0, otherwise `failed`               |
+| `duration_ms`       | Wall-clock time for the command                                   |
+| `memory_peak_mb`    | Memory peak gained during the command, delta from start           |
+| `db_query_count`    | Queries during the command, when query collection is on           |
+| `db_query_total_ms` | Total query time during the command                               |
+| `db_slow_queries`   | Slow queries above threshold                                      |
+| `trace_id`          | Correlation id when resolvable                                    |
+
+### Options
+
+```php
+'commands' => [
+    'message' => 'console.command',
+
+    // Skip these command names entirely. Useful for noisy or
+    // long-running commands.
+    'ignore' => [
+        // 'schedule:run',
+        // 'queue:work',
+    ],
+],
+```
+
+Inherits the shared `channel`, `level`, and `db_*` defaults.
+
+### Common ignore list candidates
+
+`schedule:run` fires every minute via cron and `queue:work` / `queue:listen` never finish under normal operation. Add them to `commands.ignore` if their entries would just be noise.
+
+### Customising the entry
+
+```php
+use DevtimeLtd\LaravelObservabilityLog\CommandSensor;
+use Illuminate\Console\Events\CommandFinished;
+
+CommandSensor::extend(function (CommandFinished $event, array $entry) {
+    $entry['env'] = app()->environment();
+    return $entry;
+});
+
+CommandSensor::using(function (CommandFinished $event, array $measurements) {
+    return [
+        'command' => $event->command,
+        'status' => $event->exitCode === 0 ? 'success' : 'failed',
+        'duration_ms' => $measurements['duration_ms'],
+    ];
+});
+
+CommandSensor::message(fn (CommandFinished $event) => 'cmd.'.$event->command);
 ```
 
 ## Header capture
@@ -452,7 +512,7 @@ Each row shows the event name emitted on the configured log channel.
 - [x] `RequestSensor` (`http.request`), incoming HTTP requests
 - [x] `ExceptionSensor` (`error.exception`), exceptions reported via Laravel's exception handler
 - [x] `JobSensor` (`job.attempt`, `job.queued`), queued job attempts and enqueues
-- [ ] `CommandSensor` (`console.command`), Artisan command completions
+- [x] `CommandSensor` (`console.command`), Artisan command completions
 - [ ] `ScheduledTaskSensor` (`schedule.task`), scheduled task completions
 - [ ] `CacheSensor` (`cache.hit`, `cache.miss`, `cache.write`, `cache.delete`), cache operations
 - [ ] `OutgoingHttpSensor` (`http.outgoing`), outgoing HTTP via the `Http` facade plus optional Guzzle middleware

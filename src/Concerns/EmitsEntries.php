@@ -9,6 +9,24 @@ use Throwable;
 trait EmitsEntries
 {
     /**
+     * Read a sensor-section config key, falling back to the same key at
+     * the package's top level. Sensor-level wins when present even if
+     * set to null or false (so an explicit override beats a top-level
+     * default). The using class must declare a `CONFIG_PATH` constant
+     * pointing at its config section, e.g. `'observability-log.requests'`.
+     */
+    protected static function sensorConfig(string $key, mixed $default = null): mixed
+    {
+        $sensorConfig = config(static::CONFIG_PATH);
+
+        if (is_array($sensorConfig) && array_key_exists($key, $sensorConfig)) {
+            return $sensorConfig[$key];
+        }
+
+        return config('observability-log.'.$key, $default);
+    }
+
+    /**
      * Accepts a comma-separated string or an array of strings. Non-string
      * entries are dropped; null / scalar / object input resolves to [].
      *

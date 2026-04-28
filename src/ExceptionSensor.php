@@ -17,6 +17,8 @@ class ExceptionSensor
 
     public const REPORTING_BINDING = 'devtime-ltd.observability-log.exception-reporting';
 
+    protected const CONFIG_PATH = 'observability-log.exceptions';
+
     /** @var (Closure(Throwable): array<string, mixed>)|null */
     private static ?Closure $usingCallback = null;
 
@@ -58,7 +60,7 @@ class ExceptionSensor
 
     public static function report(Throwable $e): void
     {
-        if (self::normaliseChannels(config('observability-log.exceptions.channel')) === []) {
+        if (self::normaliseChannels(self::sensorConfig('channel')) === []) {
             return;
         }
 
@@ -68,7 +70,7 @@ class ExceptionSensor
             return;
         }
 
-        $ignored = collect(config('observability-log.exceptions.ignore', []))
+        $ignored = collect(self::sensorConfig('ignore', []))
             ->contains(static fn ($class) => is_string($class) && is_a($e, $class));
 
         if ($ignored) {
@@ -91,7 +93,7 @@ class ExceptionSensor
 
     private static function write(Throwable $e): void
     {
-        $level = config('observability-log.exceptions.level');
+        $level = self::sensorConfig('level', 'error');
 
         if (self::$usingCallback) {
             $result = self::safeCallback(self::$usingCallback, 'using', $e);
@@ -107,7 +109,7 @@ class ExceptionSensor
             }
         }
 
-        $message = config('observability-log.exceptions.message');
+        $message = self::sensorConfig('message', 'error.exception');
 
         if (self::$messageOverride instanceof Closure) {
             $result = self::safeCallback(self::$messageOverride, 'message', $e);
@@ -119,7 +121,7 @@ class ExceptionSensor
         }
 
         self::dispatchEntry(
-            config('observability-log.exceptions.channel'),
+            self::sensorConfig('channel'),
             $level,
             $message,
             $entry
@@ -144,8 +146,8 @@ class ExceptionSensor
             $entry['exception_context'] = $context;
         }
 
-        if (config('observability-log.exceptions.trace', true)) {
-            if (config('observability-log.exceptions.trace_args', false)) {
+        if (self::sensorConfig('trace', true)) {
+            if (self::sensorConfig('trace_args', false)) {
                 $entry['trace'] = self::capTraceFrames($e->getTrace());
             } else {
                 $entry['trace'] = self::truncateTrace($e->getTraceAsString());
@@ -168,7 +170,7 @@ class ExceptionSensor
             $entry['user_id'] = $request->user()?->getAuthIdentifier();
             $entry['ip'] = $request->ip();
 
-            if (config('observability-log.exceptions.capture_headers')) {
+            if (self::sensorConfig('capture_headers')) {
                 $headers = RequestContext::headers($request);
                 if ($headers !== null) {
                     $entry['headers'] = $headers;
@@ -191,7 +193,7 @@ class ExceptionSensor
 
     private static function truncateTrace(string $trace): string
     {
-        $max = config('observability-log.exceptions.trace_max_bytes');
+        $max = self::sensorConfig('trace_string_max_bytes', 16384);
 
         if (! is_numeric($max)) {
             return $trace;
@@ -222,7 +224,7 @@ class ExceptionSensor
      */
     private static function capTraceFrames(array $frames): array
     {
-        $max = config('observability-log.exceptions.trace_args_max_frames');
+        $max = self::sensorConfig('trace_args_max_frames', 50);
 
         if (! is_numeric($max)) {
             return $frames;
@@ -247,7 +249,7 @@ class ExceptionSensor
      */
     private static function buildPrevious(Throwable $e): array
     {
-        $max = config('observability-log.exceptions.previous_max_depth');
+        $max = self::sensorConfig('previous_max_depth', 3);
 
         $max = is_numeric($max) ? (int) $max : null;
 

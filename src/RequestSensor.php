@@ -21,6 +21,8 @@ class RequestSensor
 
     public const CURRENT_INSTANCE_BINDING = 'devtime-ltd.observability-log.request-sensor-instance';
 
+    protected const CONFIG_PATH = 'observability-log.requests';
+
     /** @var (Closure(Request, ?Response, array<string, mixed>): array<string, mixed>)|null */
     private static ?Closure $usingCallback = null;
 
@@ -75,14 +77,9 @@ class RequestSensor
         }
     }
 
-    protected static function queryConfigPath(): string
-    {
-        return 'observability-log.requests';
-    }
-
     public function handle(Request $request, Closure $next): Response
     {
-        if (self::normaliseChannels(config('observability-log.requests.channel')) === []) {
+        if (self::normaliseChannels(self::sensorConfig('channel')) === []) {
             return $next($request);
         }
 
@@ -109,7 +106,7 @@ class RequestSensor
     private function log(Request $request, ?Response $response, float $elapsed): void
     {
         try {
-            $level = config('observability-log.requests.level');
+            $level = self::sensorConfig('level', 'info');
 
             $measurements = $this->measurements($elapsed);
 
@@ -129,7 +126,7 @@ class RequestSensor
                 }
             }
 
-            $message = config('observability-log.requests.message');
+            $message = self::sensorConfig('message', 'http.request');
 
             if (self::$messageOverride instanceof Closure) {
                 $result = self::safeCallback(self::$messageOverride, 'message', $request, $response);
@@ -141,7 +138,7 @@ class RequestSensor
             }
 
             self::dispatchEntry(
-                config('observability-log.requests.channel'),
+                self::sensorConfig('channel'),
                 $level,
                 $message,
                 $entry
@@ -161,7 +158,7 @@ class RequestSensor
     private function buildEntry(Request $request, ?Response $response, array $measurements): array
     {
         $ip = $request->ip();
-        $maskIp = config('observability-log.requests.obfuscate_ip');
+        $maskIp = self::sensorConfig('obfuscate_ip');
 
         if (is_callable($maskIp)) {
             $ip = call_user_func($maskIp, $ip);
@@ -210,7 +207,7 @@ class RequestSensor
             $entry['route_params'] = $routeParams;
         }
 
-        if (config('observability-log.requests.capture_headers')) {
+        if (self::sensorConfig('capture_headers')) {
             $headers = RequestContext::headers($request);
             if ($headers !== null) {
                 $entry['headers'] = $headers;
