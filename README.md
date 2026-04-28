@@ -2,7 +2,7 @@
 
 A set of sensors that emit structured events through Laravel log channels. Whatever log driver you use (stack, Axiom, Better Stack, Papertrail, stderr) doubles as your observability pipeline.
 
-Ships two sensors today (`RequestSensor`, `ExceptionSensor`), with more on the [roadmap](#roadmap).
+Ships three sensors today (`RequestSensor`, `ExceptionSensor`, `JobSensor`), with more on the [roadmap](#roadmap).
 
 ## Design philosophy
 
@@ -25,6 +25,17 @@ OBSERVABILITY_LOG_CHANNEL=axiom
 ```
 
 This tells every sensor to log to the `axiom` channel. Set comma-separated values (e.g. `axiom,betterstack`) to log to multiple channels via `Log::stack()`. To log to different channels per sensor, publish the config and set each sensor's `channel` key to a literal value or a dedicated env var of your choosing.
+
+### Enabling and disabling sensors
+
+Each sensor's `channel` key is its on/off switch. Setting `observability-log.{requests,exceptions,jobs}.channel` to `null` (or leaving the env var unset and the config blank) makes that sensor a no-op — no events are listened to, no entries emitted. So if you want HTTP request and exception logging but not job logging, publish the config and set:
+
+```php
+'jobs' => [
+    'channel' => null,
+    // ...
+],
+```
 
 Then register the request middleware in `bootstrap/app.php`:
 
@@ -310,6 +321,109 @@ ExceptionSensor::extend(function (Throwable $e, array $entry) {
 ExceptionSensor::message(fn (Throwable $e) => 'error.'.class_basename($e));
 ```
 
+## Job sensor
+
+`JobSensor` listens to Laravel's queue lifecycle events and emits two structured entries:
+
+- `job.queued` when a job is dispatched (one entry per dispatch)
+- `job.attempt` when a worker finishes — or fails — a single attempt (one entry per attempt, regardless of how it ended)
+
+Registration is automatic through the service provider; no `bootstrap/app.php` change required.
+
+The channel is driven by the package-level `OBSERVABILITY_LOG_CHANNEL` env var. Leave it unset to disable this sensor. To log jobs to a different channel than the rest of the package, publish the config and edit `observability-log.jobs.channel`.
+
+> **Trace correlation:** `Context::add('trace_id', ...)` propagates across queue serialization, so a `trace_id` set during a request automatically appears on every job dispatched from that request and on every attempt of those jobs. See [Trace ID](#trace-id).
+
+### Logged fields
+
+#### `job.queued`
+
+| Field          | Description                                                  |
+| -------------- | ------------------------------------------------------------ |
+| `class`        | Fully-qualified job class (or string form for raw queueing)  |
+| `queue`        | Queue name                                                   |
+| `connection`   | Queue connection name                                        |
+| `job_id`       | Driver-assigned job id, when available                       |
+| `payload_size` | Serialized payload size in bytes                             |
+| `delay`        | Delay in seconds, omitted when zero or null                  |
+| `trace_id`     | Correlation id when resolvable                               |
+
+#### `job.attempt`
+
+| Field               | Description                                                            |
+| ------------------- | ---------------------------------------------------------------------- |
+| `class`             | Resolved job class (handles wrapped/closure jobs)                      |
+| `queue`             | Queue name                                                             |
+| `connection`        | Queue connection                                                       |
+| `job_id`            | Job id                                                                 |
+| `attempt`           | Attempt number (1, 2, …)                                               |
+| `max_tries`         | Configured max attempts, omitted when null                             |
+| `status`            | `processed` or `failed`                                                |
+| `duration_ms`       | Wall-clock time for the attempt                                        |
+| `memory_peak_mb`    | Peak memory at attempt end                                             |
+| `db_query_count`    | Queries during the attempt, when query collection is on                |
+| `db_query_total_ms` | Total query time during the attempt                                    |
+| `db_slow_queries`   | Slow queries above threshold                                           |
+| `exception`         | `{class, message, file, line, code}` when the attempt failed           |
+| `trace_id`          | Correlation id when resolvable                                         |
+
+### Options
+
+Options live under `config/observability-log.php` in the `jobs` section.
+
+```php
+'jobs' => [
+    'channel' => env('OBSERVABILITY_LOG_CHANNEL'),
+    'level' => 'info',
+    'queued_message' => 'job.queued',
+    'attempt_message' => 'job.attempt',
+    'collect_queries' => true,
+    'slow_query_threshold' => 100,
+    'slow_queries_max_count' => 100,
+],
+```
+
+`collect_queries`, `slow_query_threshold`, and `slow_queries_max_count` behave the same as on the request sensor, scoped per attempt.
+
+### Failed attempts
+
+Each attempt produces exactly one `job.attempt` entry whether it succeeds, throws (and may retry), throws on the final attempt, or is failed manually via `$job->fail()`. `JobExceptionOccurred` and `JobFailed` are deduplicated so you never see two entries for the same attempt.
+
+If a job throws and is permanently failed, you'll typically also see an `error.exception` entry from `ExceptionSensor` — the queue worker still reports the exception through Laravel's exception handler. Both entries share `trace_id` when one is resolvable.
+
+### Customising the entry
+
+`JobSensor::using/extend/message` mirror the other sensors. Callbacks receive the underlying queue event so you can branch on event type:
+
+```php
+use DevtimeLtd\LaravelObservabilityLog\JobSensor;
+use Illuminate\Queue\Events\JobQueued;
+
+// Add fields on top of the default entry (queued and attempt)
+JobSensor::extend(function ($event, array $entry) {
+    $entry['env'] = app()->environment();
+    return $entry;
+});
+
+// Replace the default entry. $measurements is empty for JobQueued and
+// includes duration_ms / memory_peak_mb / db_* for attempt events.
+JobSensor::using(function ($event, array $measurements) {
+    if ($event instanceof JobQueued) {
+        return [
+            'fingerprint' => is_object($event->job) ? get_class($event->job) : (string) $event->job,
+        ];
+    }
+
+    return [
+        'class' => $event->job->resolveName(),
+        'duration_ms' => $measurements['duration_ms'],
+    ];
+});
+
+// Customise the log message
+JobSensor::message(fn ($event) => $event instanceof JobQueued ? 'queue.dispatched' : 'queue.attempted');
+```
+
 ## Header capture
 
 Off by default on both sensors; typical payload adds 1 to 3 KB per entry. Enable for the whole package:
@@ -414,7 +528,7 @@ Each row shows the event name emitted on the configured log channel.
 
 - [x] `RequestSensor` (`http.request`), incoming HTTP requests
 - [x] `ExceptionSensor` (`error.exception`), exceptions reported via Laravel's exception handler
-- [ ] `JobSensor` (`job.attempt`, `job.queued`), queued job attempts and enqueues
+- [x] `JobSensor` (`job.attempt`, `job.queued`), queued job attempts and enqueues
 - [ ] `CommandSensor` (`console.command`), Artisan command completions
 - [ ] `ScheduledTaskSensor` (`schedule.task`), scheduled task completions
 - [ ] `CacheSensor` (`cache.hit`, `cache.miss`, `cache.write`, `cache.delete`), cache operations

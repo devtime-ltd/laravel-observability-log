@@ -2,6 +2,18 @@
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-04-28
+
+### Added
+
+- `JobSensor` listens to Laravel's queue lifecycle events and emits two structured entries: `job.queued` when a job is dispatched (one entry per dispatch), and `job.attempt` when a worker finishes or fails an attempt (one entry per attempt). `JobExceptionOccurred` and `JobFailed` are deduplicated so failed attempts produce exactly one entry. Registration is automatic through the service provider. Config section: `observability-log.jobs.*` (`channel`, `level`, `queued_message`, `attempt_message`, `collect_queries`, `slow_query_threshold`, `slow_queries_max_count`).
+- Per-attempt DB query stats on `job.attempt` entries (`db_query_count`, `db_query_total_ms`, `db_slow_queries`) using the same controls as `RequestSensor`.
+- `Throwable::context()` capture on `ExceptionSensor` entries, attached as `exception_context` on the root frame and `context` on each `previous[]` frame when present.
+
+### Changed
+
+- Extracted shared DB-query tracking logic into a `TracksDatabaseQueries` trait used by both `RequestSensor` and `JobSensor`. No behavioural change to existing request entries.
+
 ## [0.2.0] - 2026-04-20
 
 ### Breaking
@@ -52,5 +64,6 @@ Extracted from [devtime-ltd/laravel-axiom-log](https://github.com/devtime-ltd/la
 3. Republish the config: `php artisan vendor:publish --tag=observability-log` (the old `config/log-request.php` can be deleted).
 4. ~~Existing `LOG_REQUESTS_*` env vars continue to work unchanged.~~ (env vars were renamed to `OBSERVABILITY_LOG_*` in v0.2.0 — see the v0.2.0 migration above.)
 
+[0.3.0]: https://github.com/devtime-ltd/laravel-observability-log/releases/tag/v0.3.0
 [0.2.0]: https://github.com/devtime-ltd/laravel-observability-log/releases/tag/v0.2.0
 [0.1.0]: https://github.com/devtime-ltd/laravel-observability-log/releases/tag/v0.1.0

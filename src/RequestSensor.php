@@ -4,10 +4,10 @@ namespace DevtimeLtd\LaravelObservabilityLog;
 
 use Closure;
 use DevtimeLtd\LaravelObservabilityLog\Concerns\EmitsEntries;
+use DevtimeLtd\LaravelObservabilityLog\Concerns\TracksDatabaseQueries;
 use DevtimeLtd\LaravelObservabilityLog\Support\RequestContext;
 use Illuminate\Database\Events\QueryExecuted;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Symfony\Component\HttpFoundation\BinaryFileResponse;
 use Symfony\Component\HttpFoundation\Response;
@@ -17,6 +17,7 @@ use Throwable;
 class RequestSensor
 {
     use EmitsEntries;
+    use TracksDatabaseQueries;
 
     public const QUERY_LISTENER_BINDING = 'devtime-ltd.observability-log.query-listener-registered';
 
@@ -30,22 +31,6 @@ class RequestSensor
 
     /** @var (Closure(Request, ?Response): string)|string|null */
     private static Closure|string|null $messageOverride = null;
-
-    private bool $collectQueries = false;
-
-    private ?int $slowQueryThreshold = null;
-
-    /** null = unbounded; positive int caps, extra matches bump $dbSlowQueriesDropped. */
-    private ?int $slowQueriesMaxCount = null;
-
-    private int $dbQueryCount = 0;
-
-    private float $dbQueryTotalMs = 0;
-
-    /** @var list<array{sql: string, duration_ms: float, connection: string}> */
-    private array $dbSlowQueries = [];
-
-    private int $dbSlowQueriesDropped = 0;
 
     /**
      * Replace the default entry. Throw or non-array return falls back to default.
@@ -87,27 +72,19 @@ class RequestSensor
 
         $instance = $app->make(self::CURRENT_INSTANCE_BINDING);
 
-        if (! $instance instanceof self || ! $instance->collectQueries) {
-            return;
+        if ($instance instanceof self) {
+            $instance->trackQuery($query);
         }
+    }
 
-        $instance->dbQueryCount++;
-        $instance->dbQueryTotalMs += $query->time;
+    protected static function queryConfigPath(): string
+    {
+        return 'observability-log.requests';
+    }
 
-        if ($instance->slowQueryThreshold !== null && $query->time >= $instance->slowQueryThreshold) {
-            if ($instance->slowQueriesMaxCount !== null
-                && count($instance->dbSlowQueries) >= $instance->slowQueriesMaxCount) {
-                $instance->dbSlowQueriesDropped++;
-
-                return;
-            }
-
-            $instance->dbSlowQueries[] = [
-                'sql' => $query->sql,
-                'duration_ms' => round($query->time, 2),
-                'connection' => $query->connectionName,
-            ];
-        }
+    protected static function queryListenerBinding(): string
+    {
+        return self::QUERY_LISTENER_BINDING;
     }
 
     public function handle(Request $request, Closure $next): Response
@@ -116,13 +93,7 @@ class RequestSensor
             return $next($request);
         }
 
-        $this->collectQueries = (bool) config('observability-log.requests.collect_queries');
-
-        if ($this->collectQueries) {
-            $this->slowQueryThreshold = self::resolveSlowQueryThreshold();
-            $this->slowQueriesMaxCount = self::resolveSlowQueriesMaxCount();
-            self::ensureQueryListener();
-        }
+        $this->configureQueryTracking();
 
         $app = app();
         $start = microtime(true);
@@ -142,79 +113,18 @@ class RequestSensor
         }
     }
 
-    private static function resolveSlowQueryThreshold(): ?int
-    {
-        $value = config('observability-log.requests.slow_query_threshold');
-
-        if ($value === null || $value === false) {
-            return null;
-        }
-
-        return is_int($value) || is_numeric($value) ? (int) $value : null;
-    }
-
-    private static function resolveSlowQueriesMaxCount(): ?int
-    {
-        $value = config('observability-log.requests.slow_queries_max_count');
-
-        if ($value === null || $value === false) {
-            return null;
-        }
-
-        if (! is_int($value) && ! is_numeric($value)) {
-            return null;
-        }
-
-        $value = (int) $value;
-
-        return $value > 0 ? $value : null;
-    }
-
-    /**
-     * Register once per app. Container-bound flag so Octane reuses and
-     * Testbench refreshes re-register against the new event dispatcher.
-     */
-    private static function ensureQueryListener(): void
-    {
-        $app = app();
-
-        if ($app->bound(self::QUERY_LISTENER_BINDING)) {
-            return;
-        }
-
-        DB::listen(function (QueryExecuted $query) {
-            self::recordQuery($query);
-        });
-
-        $app->instance(self::QUERY_LISTENER_BINDING, true);
-    }
-
     private function log(Request $request, ?Response $response, float $elapsed): void
     {
         try {
             $level = config('observability-log.requests.level');
 
-            $measurements = [
-                'duration_ms' => round($elapsed * 1000, 2),
-                'memory_peak_mb' => round(memory_get_peak_usage(true) / 1024 / 1024, 2),
-            ];
-
-            if ($this->collectQueries) {
-                $measurements['db_query_count'] = $this->dbQueryCount;
-                $measurements['db_query_total_ms'] = round($this->dbQueryTotalMs, 2);
-
-                if ($this->dbSlowQueries || $this->dbSlowQueriesDropped > 0) {
-                    $slow = $this->dbSlowQueries;
-
-                    if ($this->dbSlowQueriesDropped > 0) {
-                        $slow[] = [
-                            'truncated' => sprintf('%d more slow queries dropped', $this->dbSlowQueriesDropped),
-                        ];
-                    }
-
-                    $measurements['db_slow_queries'] = $slow;
-                }
-            }
+            $measurements = array_merge(
+                [
+                    'duration_ms' => round($elapsed * 1000, 2),
+                    'memory_peak_mb' => round(memory_get_peak_usage(true) / 1024 / 1024, 2),
+                ],
+                $this->queryStats(),
+            );
 
             if (self::$usingCallback) {
                 $result = self::safeCallback(self::$usingCallback, 'using', $request, $response, $measurements);
