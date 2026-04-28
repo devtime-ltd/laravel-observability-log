@@ -2,6 +2,21 @@
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-04-28
+
+### Breaking
+
+- Hoisted `channel`, `level`, `capture_headers`, `db_collect_queries`, `db_slow_query_threshold`, and `db_slow_queries_max_count` to top-level config keys. Each sensor inherits them; override per sensor by setting the same key inside that sensor's section. The defaults you used to set inside `requests` / `exceptions` / `jobs` no longer ship in the per-sensor sections of the published config.
+- Renamed `observability-log.exceptions.trace_max_bytes` to `observability-log.exceptions.trace_string_max_bytes` to mirror `trace_args_max_frames` (the parallel cap on the array form). Rename in your published config.
+
+### Added
+
+- `CommandSensor` listens to `CommandStarting` / `CommandFinished` and emits one `console.command` entry per Artisan command invocation. Per-command DB query stats and `memory_peak_mb` use the same baseline-snapshot approach as `JobSensor` so long-lived workers (`schedule:work`, `queue:work` if not ignored) report attempt-specific values. Config section: `observability-log.commands.*` (`message`, `ignore`). Inherits the shared `channel`, `level`, `db_*` defaults.
+
+### Changed
+
+- `EmitsEntries` now exposes a `sensorConfig($key, $default)` helper that reads a sensor-section key first then falls back to the same key at the package's top level. Each sensor declares a `CONFIG_PATH` constant so the helper knows which section to look in. `TracksDatabaseQueries` reuses the same helper.
+
 ## [0.3.0] - 2026-04-28
 
 ### Breaking
@@ -73,6 +88,7 @@ Extracted from [devtime-ltd/laravel-axiom-log](https://github.com/devtime-ltd/la
 3. Republish the config: `php artisan vendor:publish --tag=observability-log` (the old `config/log-request.php` can be deleted).
 4. ~~Existing `LOG_REQUESTS_*` env vars continue to work unchanged.~~ (env vars were renamed to `OBSERVABILITY_LOG_*` in v0.2.0; see the v0.2.0 migration above.)
 
+[0.4.0]: https://github.com/devtime-ltd/laravel-observability-log/releases/tag/v0.4.0
 [0.3.0]: https://github.com/devtime-ltd/laravel-observability-log/releases/tag/v0.3.0
 [0.2.0]: https://github.com/devtime-ltd/laravel-observability-log/releases/tag/v0.2.0
 [0.1.0]: https://github.com/devtime-ltd/laravel-observability-log/releases/tag/v0.1.0

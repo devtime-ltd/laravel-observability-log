@@ -369,11 +369,11 @@ describe('header capture', function () {
     });
 });
 
-describe('trace_max_bytes', function () {
+describe('trace_string_max_bytes', function () {
     it('truncates a string trace exceeding the cap', function () {
         config([
             'observability-log.exceptions.channel' => 'test-channel',
-            'observability-log.exceptions.trace_max_bytes' => 50,
+            'observability-log.exceptions.trace_string_max_bytes' => 50,
         ]);
 
         $channel = Mockery::mock();
@@ -400,10 +400,10 @@ describe('trace_max_bytes', function () {
         }
     });
 
-    it('disables truncation when trace_max_bytes is null', function () {
+    it('disables truncation when trace_string_max_bytes is null', function () {
         config([
             'observability-log.exceptions.channel' => 'test-channel',
-            'observability-log.exceptions.trace_max_bytes' => null,
+            'observability-log.exceptions.trace_string_max_bytes' => null,
         ]);
 
         $channel = Mockery::mock();
@@ -424,7 +424,7 @@ describe('trace_max_bytes', function () {
         config([
             'observability-log.exceptions.channel' => 'test-channel',
             'observability-log.exceptions.trace_args' => true,
-            'observability-log.exceptions.trace_max_bytes' => 50,
+            'observability-log.exceptions.trace_string_max_bytes' => 50,
         ]);
 
         $channel = Mockery::mock();
@@ -440,7 +440,7 @@ describe('trace_max_bytes', function () {
     it('preserves valid UTF-8 after truncation', function () {
         config([
             'observability-log.exceptions.channel' => 'test-channel',
-            'observability-log.exceptions.trace_max_bytes' => 50,
+            'observability-log.exceptions.trace_string_max_bytes' => 50,
         ]);
 
         $captured = null;
@@ -470,7 +470,7 @@ describe('trace_max_bytes', function () {
     it('prefers to cut at a frame boundary', function () {
         config([
             'observability-log.exceptions.channel' => 'test-channel',
-            'observability-log.exceptions.trace_max_bytes' => 200,
+            'observability-log.exceptions.trace_string_max_bytes' => 200,
         ]);
 
         $captured = null;

@@ -2,6 +2,8 @@
 
 namespace DevtimeLtd\LaravelObservabilityLog;
 
+use Illuminate\Console\Events\CommandFinished;
+use Illuminate\Console\Events\CommandStarting;
 use Illuminate\Contracts\Debug\ExceptionHandler;
 use Illuminate\Database\Events\QueryExecuted;
 use Illuminate\Queue\Events\JobExceptionOccurred;
@@ -23,6 +25,7 @@ class ObservabilityLogServiceProvider extends ServiceProvider
         $this->mergeConfigFrom(__DIR__.'/../config/observability-log.php', 'observability-log');
 
         $this->app->singleton(JobSensor::class);
+        $this->app->singleton(CommandSensor::class);
     }
 
     public function boot(): void
@@ -45,6 +48,9 @@ class ObservabilityLogServiceProvider extends ServiceProvider
         Event::listen(JobExceptionOccurred::class, [JobSensor::class, 'recordExceptionOccurred']);
         Event::listen(JobFailed::class, [JobSensor::class, 'recordFailed']);
 
+        Event::listen(CommandStarting::class, [CommandSensor::class, 'recordStarting']);
+        Event::listen(CommandFinished::class, [CommandSensor::class, 'recordFinished']);
+
         $this->registerSharedQueryListener();
     }
 
@@ -57,6 +63,7 @@ class ObservabilityLogServiceProvider extends ServiceProvider
         DB::listen(function (QueryExecuted $query) {
             RequestSensor::recordQuery($query);
             JobSensor::recordQuery($query);
+            CommandSensor::recordQuery($query);
         });
 
         $this->app->instance(self::QUERY_LISTENER_BINDING, true);

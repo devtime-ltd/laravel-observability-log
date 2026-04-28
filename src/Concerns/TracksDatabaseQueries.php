@@ -22,9 +22,6 @@ trait TracksDatabaseQueries
 
     private int $dbSlowQueriesDropped = 0;
 
-    /** Dotted config path - collect_queries, slow_query_threshold, slow_queries_max_count are read from here. */
-    abstract protected static function queryConfigPath(): string;
-
     protected function configureQueryTracking(): void
     {
         $this->resetQueryStats();
@@ -33,7 +30,7 @@ trait TracksDatabaseQueries
 
     protected function loadQueryConfig(): void
     {
-        $this->collectQueries = (bool) config(static::queryConfigPath().'.db_collect_queries');
+        $this->collectQueries = (bool) static::sensorConfig('db_collect_queries', true);
 
         if ($this->collectQueries) {
             $this->slowQueryThreshold = self::resolveSlowQueryThreshold();
@@ -131,7 +128,7 @@ trait TracksDatabaseQueries
 
     private static function resolveSlowQueryThreshold(): ?int
     {
-        $value = config(static::queryConfigPath().'.db_slow_query_threshold');
+        $value = static::sensorConfig('db_slow_query_threshold', 100);
 
         if ($value === null || $value === false) {
             return null;
@@ -142,7 +139,7 @@ trait TracksDatabaseQueries
 
     private static function resolveSlowQueriesMaxCount(): ?int
     {
-        $value = config(static::queryConfigPath().'.db_slow_queries_max_count');
+        $value = static::sensorConfig('db_slow_queries_max_count', 100);
 
         if ($value === null || $value === false) {
             return null;

@@ -4,6 +4,46 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Channel
+    |--------------------------------------------------------------------------
+    |
+    | Default log channel for every sensor. Comma-separated values or an
+    | array route to Log::stack(). Leave unset to disable the whole
+    | package; override per sensor by setting "channel" inside that
+    | sensor's section.
+    |
+    */
+
+    'channel' => env('OBSERVABILITY_LOG_CHANNEL'),
+
+    /*
+    |--------------------------------------------------------------------------
+    | Log level
+    |--------------------------------------------------------------------------
+    |
+    | Default PSR-3 level used by every sensor. Override per sensor by
+    | setting "level" inside that sensor's section.
+    |
+    */
+
+    'level' => 'info',
+
+    /*
+    |--------------------------------------------------------------------------
+    | Header capture
+    |--------------------------------------------------------------------------
+    |
+    | Default for the request and exception sensors. Header names listed
+    | in "redact_headers" below have their values replaced with
+    | "[redacted]". Override per sensor by setting "capture_headers"
+    | inside that sensor's section.
+    |
+    */
+
+    'capture_headers' => env('OBSERVABILITY_LOG_CAPTURE_HEADERS', false),
+
+    /*
+    |--------------------------------------------------------------------------
     | Header redaction
     |--------------------------------------------------------------------------
     |
@@ -67,35 +107,38 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Database query collection
+    |--------------------------------------------------------------------------
+    |
+    | Defaults shared by every sensor that supports DB query stats
+    | (requests, jobs, commands). Override per sensor by setting the
+    | same key inside that sensor's section.
+    |
+    */
+
+    'db_collect_queries' => true,
+
+    'db_slow_query_threshold' => 100, // null disables slow query collection
+
+    // Cap the number of slow queries per window (request, attempt,
+    // command). A ['truncated' => 'N more slow queries dropped']
+    // marker is appended when exceeded. null or 0 disables.
+    'db_slow_queries_max_count' => 100,
+
+    /*
+    |--------------------------------------------------------------------------
     | Request logging
     |--------------------------------------------------------------------------
     |
-    | Channel enables per-request logging via the RequestSensor middleware.
-    | Comma-separated values or an array route to Log::stack(). Leave
-    | unset to disable.
+    | RequestSensor middleware. Emits "http.request" per request.
     |
     */
 
     'requests' => [
 
-        'channel' => env('OBSERVABILITY_LOG_CHANNEL'),
-
         'message' => 'http.request',
 
-        'level' => 'info',
-
         'obfuscate_ip' => false, // false or callable, e.g. ObfuscateIp::level(2)
-
-        'db_collect_queries' => true,
-
-        'db_slow_query_threshold' => 100, // null disables slow query collection
-
-        // Cap the number of slow queries per request; a
-        // ['truncated' => 'N more slow queries dropped'] marker is
-        // appended when exceeded. null or 0 disables.
-        'db_slow_queries_max_count' => 100,
-
-        'capture_headers' => env('OBSERVABILITY_LOG_CAPTURE_HEADERS', false),
 
     ],
 
@@ -104,16 +147,13 @@ return [
     | Exception logging
     |--------------------------------------------------------------------------
     |
-    | Channel enables structured logging of every exception reported
-    | through Laravel's ExceptionHandler. Respects Laravel's $dontReport
-    | filter (ValidationException, AuthenticationException, etc. do not
-    | appear). Leave unset to disable.
+    | Auto-registered through Laravel's ExceptionHandler. Respects
+    | Laravel's $dontReport filter (ValidationException,
+    | AuthenticationException, etc. do not appear).
     |
     */
 
     'exceptions' => [
-
-        'channel' => env('OBSERVABILITY_LOG_CHANNEL'),
 
         'message' => 'error.exception',
 
@@ -138,17 +178,14 @@ return [
         // zend.exception_ignore_args prerequisite.
         'trace_args' => false,
 
-        // When trace_args is true, cap the number of frames emitted.
-        // null or 0 disables; a ['truncated' => 'after N frames']
-        // marker is appended when the cap is reached.
+        // Cap on the number of frames emitted in the array form (only
+        // used when trace_args is true). null or 0 disables; a
+        // ['truncated' => 'after N frames'] marker is appended when
+        // the cap is reached.
         'trace_args_max_frames' => 50,
 
-        // Byte cap for the string trace. null or 0 disables. Applies
-        // only to the string form; the trace_args array uses
-        // trace_args_max_frames.
-        'trace_max_bytes' => 16384,
-
-        'capture_headers' => env('OBSERVABILITY_LOG_CAPTURE_HEADERS', false),
+        // Byte cap on the string form of the trace. null or 0 disables.
+        'trace_string_max_bytes' => 16384,
 
     ],
 
@@ -157,31 +194,42 @@ return [
     | Job logging
     |--------------------------------------------------------------------------
     |
-    | Channel enables structured logging of queue lifecycle events.
     | Emits "job.queued" when a job is dispatched and "job.attempt"
-    | once per worker attempt (whether it succeeds or fails). Leave
-    | unset to disable.
+    | once per worker attempt (whether it succeeds or fails).
     |
     */
 
     'jobs' => [
 
-        'channel' => env('OBSERVABILITY_LOG_CHANNEL'),
-
-        'level' => 'info',
-
         'queued_message' => 'job.queued',
 
         'attempt_message' => 'job.attempt',
 
-        'db_collect_queries' => true,
+    ],
 
-        'db_slow_query_threshold' => 100, // null disables slow query collection
+    /*
+    |--------------------------------------------------------------------------
+    | Console command logging
+    |--------------------------------------------------------------------------
+    |
+    | Emits "console.command" once per Artisan command that finishes
+    | (whether successfully or with a non-zero exit code).
+    |
+    */
 
-        // Cap the number of slow queries per attempt; a
-        // ['truncated' => 'N more slow queries dropped'] marker is
-        // appended when exceeded. null or 0 disables.
-        'db_slow_queries_max_count' => 100,
+    'commands' => [
+
+        'message' => 'console.command',
+
+        // Skip specific command names. Useful for noisy or long-running
+        // commands you do not want a log entry for, e.g. schedule:run
+        // (fires every minute) or queue:work (never finishes normally).
+        'ignore' => [
+            // 'schedule:run',
+            // 'schedule:work',
+            // 'queue:work',
+            // 'queue:listen',
+        ],
 
     ],
 
