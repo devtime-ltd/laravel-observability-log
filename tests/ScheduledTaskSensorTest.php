@@ -1,6 +1,7 @@
 <?php
 
 use DevtimeLtd\LaravelObservabilityLog\ScheduledTaskSensor;
+use Illuminate\Console\Events\ScheduledBackgroundTaskFinished;
 use Illuminate\Console\Events\ScheduledTaskFailed;
 use Illuminate\Console\Events\ScheduledTaskFinished;
 use Illuminate\Console\Events\ScheduledTaskSkipped;
@@ -91,6 +92,26 @@ describe('finished event', function () {
         Log::shouldReceive('channel')->never();
 
         ScheduledTaskSensor::recordFinished(new ScheduledTaskFinished(scheduledEvent(), 0.1));
+    });
+
+    it('emits success on ScheduledBackgroundTaskFinished (runInBackground tasks)', function () {
+        config(['observability-log.schedule.channel' => 'test']);
+
+        $task = scheduledEvent('php artisan inspire', '*/5 * * * *', 'Background inspire');
+
+        $channel = Mockery::mock();
+        $channel->shouldReceive('log')
+            ->once()
+            ->withArgs(function (string $level, string $message, array $context) {
+                return $context['task'] === 'Background inspire'
+                    && $context['status'] === 'success'
+                    && is_float($context['duration_ms']);
+            });
+
+        Log::shouldReceive('channel')->with('test')->andReturn($channel);
+
+        ScheduledTaskSensor::recordStarting(new ScheduledTaskStarting($task));
+        ScheduledTaskSensor::recordBackgroundFinished(new ScheduledBackgroundTaskFinished($task));
     });
 });
 
