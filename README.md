@@ -2,7 +2,7 @@
 
 A set of sensors that emit structured events through Laravel log channels. Whatever log driver you use (stack, Axiom, Better Stack, Papertrail, stderr) doubles as your observability pipeline.
 
-Ships four sensors today (`RequestSensor`, `ExceptionSensor`, `JobSensor`, `CommandSensor`), with more on the [roadmap](#roadmap).
+Ships five sensors today (`RequestSensor`, `ExceptionSensor`, `JobSensor`, `CommandSensor`, `ScheduledTaskSensor`), with more on the [roadmap](#roadmap).
 
 ## Design philosophy
 
@@ -406,6 +406,53 @@ CommandSensor::using(function (CommandFinished $event, array $measurements) {
 CommandSensor::message(fn (CommandFinished $event) => 'cmd.'.$event->command);
 ```
 
+## Scheduled task sensor
+
+`ScheduledTaskSensor` listens to Laravel's `ScheduledTaskStarting`, `ScheduledTaskFinished`, `ScheduledTaskFailed`, and `ScheduledTaskSkipped` events and emits one `schedule.task` entry per scheduled task execution. Registration is automatic through the service provider.
+
+`status` is one of `success`, `failed`, or `skipped`. A skipped entry is emitted when a task was due but a filter (e.g. `withoutOverlapping()`, `when(...)`, `skip(...)`) prevented it from running, so you can still see the schedule was evaluated.
+
+### Logged fields
+
+| Field               | Description                                                                  |
+| ------------------- | ---------------------------------------------------------------------------- |
+| `task`              | Human-friendly task name (description if set, otherwise the built command)  |
+| `expression`        | Cron expression                                                              |
+| `timezone`          | Configured timezone, when set                                                |
+| `status`            | `success`, `failed`, or `skipped`                                            |
+| `duration_ms`       | Wall-clock time for the task (omitted on `skipped`)                          |
+| `memory_peak_mb`    | Memory peak gained during the task (omitted on `skipped`)                    |
+| `db_query_count`    | Queries during the task, when query collection is on (omitted on `skipped`)  |
+| `db_query_total_ms` | Total query time during the task                                             |
+| `db_slow_queries`   | Slow queries above threshold                                                 |
+| `exception`         | `{class, message, file, line, code}` when the task failed                    |
+| `trace_id`          | Correlation id when resolvable                                               |
+
+### Options
+
+```php
+'schedule' => [
+    'message' => 'schedule.task',
+],
+```
+
+Inherits the shared `channel`, `level`, and `db_*` defaults.
+
+### Customising the entry
+
+```php
+use DevtimeLtd\LaravelObservabilityLog\ScheduledTaskSensor;
+use Illuminate\Console\Events\ScheduledTaskSkipped;
+
+ScheduledTaskSensor::extend(function ($event, array $entry) {
+    $entry['env'] = app()->environment();
+    return $entry;
+});
+
+// Different message for skipped vs ran
+ScheduledTaskSensor::message(fn ($event) => $event instanceof ScheduledTaskSkipped ? 'schedule.skipped' : 'schedule.ran');
+```
+
 ## Header capture
 
 Off by default on the request and exception sensors (job entries don't capture headers). Typical payload adds 1 to 3 KB per entry. Enable for the whole package:
@@ -513,7 +560,7 @@ Each row shows the event name emitted on the configured log channel.
 - [x] `ExceptionSensor` (`error.exception`), exceptions reported via Laravel's exception handler
 - [x] `JobSensor` (`job.attempt`, `job.queued`), queued job attempts and enqueues
 - [x] `CommandSensor` (`console.command`), Artisan command completions
-- [ ] `ScheduledTaskSensor` (`schedule.task`), scheduled task completions
+- [x] `ScheduledTaskSensor` (`schedule.task`), scheduled task completions
 - [ ] `CacheSensor` (`cache.hit`, `cache.miss`, `cache.write`, `cache.delete`), cache operations
 - [ ] `OutgoingHttpSensor` (`http.outgoing`), outgoing HTTP via the `Http` facade plus optional Guzzle middleware
 - [ ] `MailSensor` (`mail.sent`), mail delivery

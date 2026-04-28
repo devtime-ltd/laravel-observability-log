@@ -12,6 +12,7 @@
 ### Added
 
 - `CommandSensor` listens to `CommandStarting` / `CommandFinished` and emits one `console.command` entry per Artisan command invocation. Per-command DB query stats and `memory_peak_mb` use the same baseline-snapshot approach as `JobSensor` so long-lived workers (`schedule:work`, `queue:work` if not ignored) report attempt-specific values. Config section: `observability-log.commands.*` (`message`, `ignore`). Inherits the shared `channel`, `level`, `db_*` defaults.
+- `ScheduledTaskSensor` listens to `ScheduledTaskStarting`, `ScheduledTaskFinished`, `ScheduledTaskFailed`, and `ScheduledTaskSkipped`, and emits one `schedule.task` entry per scheduled task execution. Status is `success`, `failed`, or `skipped` (the latter when a filter such as `withoutOverlapping()` prevented a due task from running). Carries `task`, `expression`, optional `timezone`, plus the same per-window `duration_ms` / `memory_peak_mb` / `db_*` measurement shape used by the other sensors. Config section: `observability-log.schedule.*` (`message`).
 
 ### Changed
 
