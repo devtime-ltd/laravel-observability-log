@@ -412,7 +412,11 @@ CommandSensor::message(fn (CommandFinished $event) => 'cmd.'.$event->command);
 
 `status` is one of `success`, `failed`, or `skipped`. A skipped entry is emitted when a task was due but a filter (e.g. `withoutOverlapping()`, `when(...)`, `skip(...)`) prevented it from running, so you can still see the schedule was evaluated. `failed` covers both thrown exceptions and non-zero exit codes from the underlying command.
 
-For tasks defined with `runInBackground()`, the completion entry comes from a separate `php artisan schedule:finish` process; the per-attempt `duration_ms`, `memory_peak_mb`, and `db_*` fields are only available for foreground runs.
+### Background tasks
+
+A `runInBackground()` scheduled command runs across three PHP processes: `schedule:run` kicks off the work and exits, the actual command runs detached, then `schedule:finish` fires the completion event in a fresh process. Because the three processes don't share state, `schedule.task` entries for background runs include the metadata (task, expression, status from the exit code) but not `duration_ms`, `memory_peak_mb`, or `db_*`.
+
+If the background task is itself an Artisan command, [`CommandSensor`](#command-sensor) emits a `console.command` entry from the actual command process with all of those measurements. Correlate the two entries by command name (or set a `trace_id` via `Context::add` if you want explicit linking).
 
 ### Logged fields
 
