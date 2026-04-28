@@ -86,33 +86,28 @@ class ScheduledTaskSensor
         }
 
         $task = $event->task;
-        $status = self::statusFromExitCode($task);
 
         if (! empty($task->runInBackground)) {
-            // For runInBackground() tasks, schedule:run fires
-            // ScheduledTaskFinished after spawning the child process and
-            // the real completion arrives on
-            // ScheduledBackgroundTaskFinished from a separate
-            // `schedule:finish` process - drop this kicked-off event
-            // and let the later one emit instead.
+            // schedule:run fires ScheduledTaskFinished right after
+            // spawning the background child process, before its exit
+            // code is known (Laravel only sets exitCode in schedule:finish).
+            // Drop this event and rely on ScheduledBackgroundTaskFinished
+            // for the real completion.
             //
-            // Exception: when Event::run() short-circuited via
-            // shouldSkipDueToOverlapping (a race against another running
-            // instance after filtersPass let the task through), no
-            // background process was spawned, so schedule:finish never
-            // fires and BackgroundFinished never arrives. Emit the skip
-            // here so the run does not vanish.
-            $instance = app(self::class);
-            $instance->dropTaskState($task);
-
-            if ($status === 'skipped') {
-                self::emitWithoutMeasurements($event, $task, 'skipped');
-            }
+            // Note: the rare race where Event::run() short-circuits via
+            // shouldSkipDueToOverlapping after filtersPass already passed
+            // is invisible to this sensor for background tasks, because
+            // we cannot distinguish "kicked off, exit code pending"
+            // from "skipped, never ran" - both look identical here. The
+            // common overlap path goes through filtersPass and emits
+            // ScheduledTaskSkipped instead, so this only affects the
+            // race window.
+            app(self::class)->dropTaskState($task);
 
             return;
         }
 
-        app(self::class)->emitTerminal($event, $status, null);
+        app(self::class)->emitTerminal($event, self::statusFromExitCode($task), null);
     }
 
     public static function recordBackgroundFinished(ScheduledBackgroundTaskFinished $event): void
@@ -125,25 +120,7 @@ class ScheduledTaskSensor
         // so there is no Starting state to correlate against. Emit a
         // standalone entry with whatever metadata the rehydrated task
         // exposes; duration / memory / db stats are unavailable here.
-        $task = $event->task;
-        $status = self::statusFromExitCode($task);
-
-        try {
-            $entry = self::resolveEntry(
-                $event,
-                [],
-                fn () => self::buildEntry($task, $status, null, []),
-            );
-
-            self::dispatchEntry(
-                self::sensorConfig('channel'),
-                self::sensorConfig('level', 'info'),
-                self::resolveMessage($event, self::sensorConfig('message', 'schedule.task')),
-                $entry
-            );
-        } catch (Throwable $e) {
-            self::reportInternalError($e);
-        }
+        self::emitWithoutMeasurements($event, $event->task, self::statusFromExitCode($event->task));
     }
 
     public static function recordFailed(ScheduledTaskFailed $event): void
@@ -163,22 +140,7 @@ class ScheduledTaskSensor
 
         // Skipped tasks have no Starting event, so there is nothing to
         // measure. Emit a minimal entry so the skip is still observable.
-        try {
-            $entry = self::resolveEntry(
-                $event,
-                [],
-                fn () => self::buildEntry($event->task, 'skipped', null, []),
-            );
-
-            self::dispatchEntry(
-                self::sensorConfig('channel'),
-                self::sensorConfig('level', 'info'),
-                self::resolveMessage($event, self::sensorConfig('message', 'schedule.task')),
-                $entry
-            );
-        } catch (Throwable $e) {
-            self::reportInternalError($e);
-        }
+        self::emitWithoutMeasurements($event, $event->task, 'skipped');
     }
 
     public static function recordQuery(QueryExecuted $query): void
