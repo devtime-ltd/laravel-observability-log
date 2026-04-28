@@ -360,7 +360,7 @@ The channel is driven by the package-level `OBSERVABILITY_LOG_CHANNEL` env var. 
 | `max_tries`         | Configured max attempts, omitted when null                             |
 | `status`            | `processed` or `failed`                                                |
 | `duration_ms`       | Wall-clock time for the attempt                                        |
-| `memory_peak_mb`    | Peak memory at attempt end                                             |
+| `memory_peak_mb`    | Memory peak gained during the attempt window (delta from `memory_get_peak_usage()` at attempt start). Stays accurate on long-lived workers; may be 0 when the attempt did not push the process peak higher. |
 | `db_query_count`    | Queries during the attempt, when query collection is on                |
 | `db_query_total_ms` | Total query time during the attempt                                    |
 | `db_slow_queries`   | Slow queries above threshold                                           |

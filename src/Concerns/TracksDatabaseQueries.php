@@ -82,14 +82,23 @@ trait TracksDatabaseQueries
      * counters - which is the right call when the sensor's instance lifetime
      * is the same as the window (e.g. a per-request middleware).
      *
-     * @param  array{queryCountBaseline?: int, queryTotalMsBaseline?: float, slowQueriesBaseline?: int, slowDroppedBaseline?: int}|null  $baselines
+     * `memory_peak_mb` is the rise in `memory_get_peak_usage()` since
+     * `memoryPeakBaseline`. Without a baseline it falls back to the process
+     * peak, which is only accurate when the process is fresh (FPM-style).
+     * On long-lived workers the baseline must be supplied or the value will
+     * be the historical process peak rather than the attempt's own peak.
+     *
+     * @param  array{memoryPeakBaseline?: int, queryCountBaseline?: int, queryTotalMsBaseline?: float, slowQueriesBaseline?: int, slowDroppedBaseline?: int}|null  $baselines
      * @return array<string, mixed>
      */
     protected function measurements(float $elapsed, ?array $baselines = null): array
     {
+        $memoryPeakBaseline = $baselines['memoryPeakBaseline'] ?? 0;
+        $memoryPeakBytes = max(0, memory_get_peak_usage(true) - $memoryPeakBaseline);
+
         $payload = [
             'duration_ms' => round($elapsed * 1000, 2),
-            'memory_peak_mb' => round(memory_get_peak_usage(true) / 1024 / 1024, 2),
+            'memory_peak_mb' => round($memoryPeakBytes / 1024 / 1024, 2),
         ];
 
         if (! $this->collectQueries) {

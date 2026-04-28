@@ -19,6 +19,7 @@
 - Extracted shared DB-query tracking logic into a `TracksDatabaseQueries` trait used by both `RequestSensor` and `JobSensor`. The trait owns the `measurements()` builder for `duration_ms`, `memory_peak_mb`, and the `db_*` fields, so both sensors emit identical-shape measurement payloads.
 - The DB query listener is now a single shared `DB::listen()` registered by the service provider, dispatching to both sensors. Previously each sensor registered its own listener.
 - `JobSensor` tracks attempt state per job instance (keyed by `spl_object_hash`) instead of a single in-flight attempt. Nested synchronous job dispatch (an outer job that calls `Queue::push(new Inner)` inside `fire()`) now logs both attempts correctly; previously the outer attempt was silently dropped.
+- `JobSensor.memory_peak_mb` is now the memory peak gained during the attempt's window (delta from `memory_get_peak_usage()` at attempt start), not the cumulative process peak. On long-lived queue workers this fixes the previous behaviour where one heavy job's peak would be reported on every subsequent attempt.
 
 ## [0.2.0] - 2026-04-20
 
