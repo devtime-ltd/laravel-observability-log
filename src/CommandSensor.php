@@ -143,7 +143,7 @@ class CommandSensor
 
             self::dispatchEntry(
                 self::sensorConfig('channel'),
-                self::sensorConfig('level', 'info'),
+                self::levelForStatus($event->exitCode === 0 ? 'success' : 'failed'),
                 self::resolveMessage($event, self::sensorConfig('message', 'console.command')),
                 $entry
             );

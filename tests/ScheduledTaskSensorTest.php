@@ -385,6 +385,80 @@ describe('message callback', function () {
     });
 });
 
+describe('failed_level config', function () {
+    it('uses failed_level (default error) for failed task entries', function () {
+        config(['observability-log.schedule.channel' => 'test']);
+
+        $task = scheduledEvent();
+        $channel = Mockery::mock();
+        $channel->shouldReceive('log')
+            ->once()
+            ->withArgs(fn ($level, $message, $context) => $level === 'error' && $context['status'] === 'failed');
+
+        Log::shouldReceive('channel')->with('test')->andReturn($channel);
+
+        ScheduledTaskSensor::recordStarting(new ScheduledTaskStarting($task));
+        ScheduledTaskSensor::recordFailed(new ScheduledTaskFailed($task, new RuntimeException('boom')));
+    });
+
+    it('keeps successful and skipped tasks on the regular level', function () {
+        config(['observability-log.schedule.channel' => 'test']);
+
+        $captured = [];
+        $channel = Mockery::mock();
+        $channel->shouldReceive('log')
+            ->twice()
+            ->andReturnUsing(function ($level, $message, $context) use (&$captured) {
+                $captured[] = ['level' => $level, 'status' => $context['status']];
+            });
+
+        Log::shouldReceive('channel')->with('test')->andReturn($channel);
+
+        $taskOk = scheduledEvent();
+        ScheduledTaskSensor::recordStarting(new ScheduledTaskStarting($taskOk));
+        ScheduledTaskSensor::recordFinished(new ScheduledTaskFinished($taskOk, 0.1));
+
+        ScheduledTaskSensor::recordSkipped(new ScheduledTaskSkipped(scheduledEvent()));
+
+        expect($captured[0])->toMatchArray(['level' => 'info', 'status' => 'success']);
+        expect($captured[1])->toMatchArray(['level' => 'info', 'status' => 'skipped']);
+    });
+});
+
+describe('run_in_background field', function () {
+    it('emits true for runInBackground tasks (via background completion)', function () {
+        config(['observability-log.schedule.channel' => 'test']);
+
+        $task = scheduledEvent();
+        $task->runInBackground = true;
+        $task->exitCode = 0;
+
+        $channel = Mockery::mock();
+        $channel->shouldReceive('log')
+            ->once()
+            ->withArgs(fn ($level, $message, $context) => $context['run_in_background'] === true);
+
+        Log::shouldReceive('channel')->with('test')->andReturn($channel);
+
+        ScheduledTaskSensor::recordBackgroundFinished(new ScheduledBackgroundTaskFinished($task));
+    });
+
+    it('emits false for foreground tasks', function () {
+        config(['observability-log.schedule.channel' => 'test']);
+
+        $task = scheduledEvent();
+        $channel = Mockery::mock();
+        $channel->shouldReceive('log')
+            ->once()
+            ->withArgs(fn ($level, $message, $context) => $context['run_in_background'] === false);
+
+        Log::shouldReceive('channel')->with('test')->andReturn($channel);
+
+        ScheduledTaskSensor::recordStarting(new ScheduledTaskStarting($task));
+        ScheduledTaskSensor::recordFinished(new ScheduledTaskFinished($task, 0.1));
+    });
+});
+
 describe('error handling', function () {
     it('swallows logger errors and resets state', function () {
         config(['observability-log.schedule.channel' => 'broken']);

@@ -779,6 +779,56 @@ describe('message callback', function () {
     });
 });
 
+describe('failed_level config', function () {
+    it('uses failed_level (default error) for failed attempt entries', function () {
+        config(['observability-log.jobs.channel' => 'test']);
+
+        $job = fakeJob();
+        $channel = Mockery::mock();
+        $channel->shouldReceive('log')
+            ->once()
+            ->withArgs(fn ($level, $message, $context) => $level === 'error' && $context['status'] === 'failed');
+
+        Log::shouldReceive('channel')->with('test')->andReturn($channel);
+
+        JobSensor::recordProcessing(new JobProcessing('redis', $job));
+        JobSensor::recordFailed(new JobFailed('redis', $job, new RuntimeException('boom')));
+    });
+
+    it('keeps successful attempts on the regular level (default info)', function () {
+        config(['observability-log.jobs.channel' => 'test']);
+
+        $job = fakeJob();
+        $channel = Mockery::mock();
+        $channel->shouldReceive('log')
+            ->once()
+            ->withArgs(fn ($level, $message, $context) => $level === 'info' && $context['status'] === 'processed');
+
+        Log::shouldReceive('channel')->with('test')->andReturn($channel);
+
+        JobSensor::recordProcessing(new JobProcessing('redis', $job));
+        JobSensor::recordProcessed(new JobProcessed('redis', $job));
+    });
+
+    it('honours sensor-level failed_level override', function () {
+        config([
+            'observability-log.jobs.channel' => 'test',
+            'observability-log.jobs.failed_level' => 'critical',
+        ]);
+
+        $job = fakeJob();
+        $channel = Mockery::mock();
+        $channel->shouldReceive('log')
+            ->once()
+            ->withArgs(fn ($level, $message, $context) => $level === 'critical');
+
+        Log::shouldReceive('channel')->with('test')->andReturn($channel);
+
+        JobSensor::recordProcessing(new JobProcessing('redis', $job));
+        JobSensor::recordFailed(new JobFailed('redis', $job, new RuntimeException('boom')));
+    });
+});
+
 describe('level config', function () {
     it('uses level from config', function () {
         config([

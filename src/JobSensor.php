@@ -192,7 +192,7 @@ class JobSensor
 
             self::dispatchEntry(
                 self::sensorConfig('channel'),
-                self::sensorConfig('level', 'info'),
+                self::levelForStatus($status),
                 self::resolveMessage($event, self::sensorConfig('attempt_message', 'job.attempt')),
                 $entry
             );

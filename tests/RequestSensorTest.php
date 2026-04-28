@@ -619,6 +619,84 @@ describe('using callback', function () {
     });
 });
 
+describe('failed_level for 5xx responses', function () {
+    beforeEach(function () {
+        RequestSensor::using(null);
+        RequestSensor::extend(null);
+        RequestSensor::message(null);
+    });
+
+    it('uses failed_level (default error) for a 500 response', function () {
+        config(['observability-log.requests.channel' => 'test-channel']);
+
+        $channel = Mockery::mock();
+        $channel->shouldReceive('log')
+            ->once()
+            ->withArgs(fn ($level, $message, $context) => $level === 'error' && $context['status'] === 500);
+
+        Log::shouldReceive('channel')->with('test-channel')->andReturn($channel);
+
+        $middleware = new RequestSensor;
+        $middleware->handle(Request::create('/oops'), fn () => new Response('boom', 500));
+    });
+
+    it('keeps 4xx and 2xx on the regular level', function () {
+        config(['observability-log.requests.channel' => 'test-channel']);
+
+        $captured = [];
+        $channel = Mockery::mock();
+        $channel->shouldReceive('log')
+            ->twice()
+            ->andReturnUsing(function ($level, $message, $context) use (&$captured) {
+                $captured[] = ['level' => $level, 'status' => $context['status']];
+            });
+
+        Log::shouldReceive('channel')->with('test-channel')->andReturn($channel);
+
+        $middleware = new RequestSensor;
+        $middleware->handle(Request::create('/ok'), fn () => new Response('OK', 200));
+        $middleware->handle(Request::create('/missing'), fn () => new Response('Not Found', 404));
+
+        expect($captured[0])->toMatchArray(['level' => 'info', 'status' => 200]);
+        expect($captured[1])->toMatchArray(['level' => 'info', 'status' => 404]);
+    });
+
+    it('honours sensor-level failed_level override', function () {
+        config([
+            'observability-log.requests.channel' => 'test-channel',
+            'observability-log.requests.failed_level' => 'critical',
+        ]);
+
+        $channel = Mockery::mock();
+        $channel->shouldReceive('log')
+            ->once()
+            ->withArgs(fn ($level, $message, $context) => $level === 'critical');
+
+        Log::shouldReceive('channel')->with('test-channel')->andReturn($channel);
+
+        $middleware = new RequestSensor;
+        $middleware->handle(Request::create('/oops'), fn () => new Response('boom', 503));
+    });
+
+    it('uses regular level when downstream throws (no response)', function () {
+        config(['observability-log.requests.channel' => 'test-channel']);
+
+        $channel = Mockery::mock();
+        $channel->shouldReceive('log')
+            ->once()
+            ->withArgs(fn ($level, $message, $context) => $level === 'info' && $context['status'] === null);
+
+        Log::shouldReceive('channel')->with('test-channel')->andReturn($channel);
+
+        $middleware = new RequestSensor;
+
+        try {
+            $middleware->handle(Request::create('/boom'), fn () => throw new RuntimeException('boom'));
+        } catch (RuntimeException) {
+        }
+    });
+});
+
 describe('config options', function () {
     beforeEach(function () {
         RequestSensor::using(null);

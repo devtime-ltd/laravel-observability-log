@@ -63,6 +63,7 @@ The package defines a handful of keys at the top level of the config that every 
 return [
     'channel' => env('OBSERVABILITY_LOG_CHANNEL'),
     'level' => 'info',
+    'failed_level' => 'error',
     'capture_headers' => env('OBSERVABILITY_LOG_CAPTURE_HEADERS', false),
     'db_collect_queries' => true,
     'db_slow_query_threshold' => 100,
@@ -71,7 +72,7 @@ return [
 ];
 ```
 
-`capture_headers` only applies to sensors that read it (request and exception). The `db_*` keys only apply to sensors that track DB stats (request, job, command).
+`level` is the default for every entry. `failed_level` is used instead when a sensor emits an entry with `status: failed` (a failed job attempt, a non-zero command exit, a failed scheduled task) or, on `RequestSensor`, when the response status code is 5xx. `ExceptionSensor` always uses `level` (every exception is a failure, so the distinction would be meaningless). `capture_headers` only applies to sensors that read it (request and exception). The `db_*` keys only apply to sensors that track DB stats (request, job, command, scheduled task).
 
 ## Request sensor
 
@@ -426,6 +427,7 @@ If the background task is itself an Artisan command, [`CommandSensor`](#command-
 | `expression`        | Cron expression                                                              |
 | `timezone`          | Configured timezone, when set                                                |
 | `status`            | `success`, `failed`, or `skipped`                                            |
+| `run_in_background` | `true` if the task was scheduled with `runInBackground()`, otherwise `false` |
 | `duration_ms`       | Wall-clock time for the task (omitted on `skipped`)                          |
 | `memory_peak_mb`    | Memory peak gained during the task (omitted on `skipped`)                    |
 | `db_query_count`    | Queries during the task, when query collection is on (omitted on `skipped`)  |
@@ -571,7 +573,7 @@ Each row shows the event name emitted on the configured log channel.
 - [ ] `OutgoingHttpSensor` (`http.outgoing`), outgoing HTTP via the `Http` facade plus optional Guzzle middleware
 - [ ] `MailSensor` (`mail.sent`), mail delivery
 - [ ] `NotificationSensor` (`notification.sent`), notification delivery
-- [ ] `observability:deploy` Artisan command, deploy markers for graph overlays
+- [ ] `observability:mark-deploy` Artisan command, deploy markers for graph overlays
 
 ## Testing
 
