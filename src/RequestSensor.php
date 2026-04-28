@@ -19,8 +19,6 @@ class RequestSensor
     use EmitsEntries;
     use TracksDatabaseQueries;
 
-    public const QUERY_LISTENER_BINDING = 'devtime-ltd.observability-log.query-listener-registered';
-
     public const CURRENT_INSTANCE_BINDING = 'devtime-ltd.observability-log.request-sensor-instance';
 
     /** @var (Closure(Request, ?Response, array<string, mixed>): array<string, mixed>)|null */
@@ -82,11 +80,6 @@ class RequestSensor
         return 'observability-log.requests';
     }
 
-    protected static function queryListenerBinding(): string
-    {
-        return self::QUERY_LISTENER_BINDING;
-    }
-
     public function handle(Request $request, Closure $next): Response
     {
         if (self::normaliseChannels(config('observability-log.requests.channel')) === []) {
@@ -118,13 +111,7 @@ class RequestSensor
         try {
             $level = config('observability-log.requests.level');
 
-            $measurements = array_merge(
-                [
-                    'duration_ms' => round($elapsed * 1000, 2),
-                    'memory_peak_mb' => round(memory_get_peak_usage(true) / 1024 / 1024, 2),
-                ],
-                $this->queryStats(),
-            );
+            $measurements = $this->measurements($elapsed);
 
             if (self::$usingCallback) {
                 $result = self::safeCallback(self::$usingCallback, 'using', $request, $response, $measurements);

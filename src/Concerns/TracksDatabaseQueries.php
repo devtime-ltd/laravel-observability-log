@@ -3,7 +3,6 @@
 namespace DevtimeLtd\LaravelObservabilityLog\Concerns;
 
 use Illuminate\Database\Events\QueryExecuted;
-use Illuminate\Support\Facades\DB;
 
 trait TracksDatabaseQueries
 {
@@ -23,26 +22,31 @@ trait TracksDatabaseQueries
 
     private int $dbSlowQueriesDropped = 0;
 
-    /** Dotted config path — collect_queries, slow_query_threshold, slow_queries_max_count are read from here. */
+    /** Dotted config path - collect_queries, slow_query_threshold, slow_queries_max_count are read from here. */
     abstract protected static function queryConfigPath(): string;
-
-    /** Container key used to register DB::listen() exactly once per app. */
-    abstract protected static function queryListenerBinding(): string;
 
     protected function configureQueryTracking(): void
     {
-        $this->dbQueryCount = 0;
-        $this->dbQueryTotalMs = 0;
-        $this->dbSlowQueries = [];
-        $this->dbSlowQueriesDropped = 0;
+        $this->resetQueryStats();
+        $this->loadQueryConfig();
+    }
 
+    protected function loadQueryConfig(): void
+    {
         $this->collectQueries = (bool) config(static::queryConfigPath().'.collect_queries');
 
         if ($this->collectQueries) {
             $this->slowQueryThreshold = self::resolveSlowQueryThreshold();
             $this->slowQueriesMaxCount = self::resolveSlowQueriesMaxCount();
-            self::ensureQueryListener();
         }
+    }
+
+    protected function resetQueryStats(): void
+    {
+        $this->dbQueryCount = 0;
+        $this->dbQueryTotalMs = 0;
+        $this->dbSlowQueries = [];
+        $this->dbSlowQueriesDropped = 0;
     }
 
     protected function trackQuery(QueryExecuted $query): void
@@ -70,31 +74,50 @@ trait TracksDatabaseQueries
         }
     }
 
-    /** @return array<string, mixed> */
-    protected function queryStats(): array
+    /**
+     * Standard measurements payload: duration_ms + memory_peak_mb + db_* fields.
+     *
+     * Pass $baselines (snapshot of the trait counters at the window's start)
+     * to emit deltas for the window only. Omit them to emit the cumulative
+     * counters - which is the right call when the sensor's instance lifetime
+     * is the same as the window (e.g. a per-request middleware).
+     *
+     * @param  array{queryCountBaseline?: int, queryTotalMsBaseline?: float, slowQueriesBaseline?: int, slowDroppedBaseline?: int}|null  $baselines
+     * @return array<string, mixed>
+     */
+    protected function measurements(float $elapsed, ?array $baselines = null): array
     {
-        if (! $this->collectQueries) {
-            return [];
-        }
-
-        $stats = [
-            'db_query_count' => $this->dbQueryCount,
-            'db_query_total_ms' => round($this->dbQueryTotalMs, 2),
+        $payload = [
+            'duration_ms' => round($elapsed * 1000, 2),
+            'memory_peak_mb' => round(memory_get_peak_usage(true) / 1024 / 1024, 2),
         ];
 
-        if ($this->dbSlowQueries || $this->dbSlowQueriesDropped > 0) {
-            $slow = $this->dbSlowQueries;
+        if (! $this->collectQueries) {
+            return $payload;
+        }
 
-            if ($this->dbSlowQueriesDropped > 0) {
+        $queryCountBaseline = $baselines['queryCountBaseline'] ?? 0;
+        $queryTotalMsBaseline = $baselines['queryTotalMsBaseline'] ?? 0;
+        $slowQueriesBaseline = $baselines['slowQueriesBaseline'] ?? 0;
+        $slowDroppedBaseline = $baselines['slowDroppedBaseline'] ?? 0;
+
+        $payload['db_query_count'] = $this->dbQueryCount - $queryCountBaseline;
+        $payload['db_query_total_ms'] = round($this->dbQueryTotalMs - $queryTotalMsBaseline, 2);
+
+        $slow = array_slice($this->dbSlowQueries, $slowQueriesBaseline);
+        $dropped = $this->dbSlowQueriesDropped - $slowDroppedBaseline;
+
+        if ($slow || $dropped > 0) {
+            if ($dropped > 0) {
                 $slow[] = [
-                    'truncated' => sprintf('%d more slow queries dropped', $this->dbSlowQueriesDropped),
+                    'truncated' => sprintf('%d more slow queries dropped', $dropped),
                 ];
             }
 
-            $stats['db_slow_queries'] = $slow;
+            $payload['db_slow_queries'] = $slow;
         }
 
-        return $stats;
+        return $payload;
     }
 
     private static function resolveSlowQueryThreshold(): ?int
@@ -123,25 +146,5 @@ trait TracksDatabaseQueries
         $value = (int) $value;
 
         return $value > 0 ? $value : null;
-    }
-
-    /**
-     * Register once per app. Container-bound flag so Octane reuses and
-     * Testbench refreshes re-register against the new event dispatcher.
-     */
-    private static function ensureQueryListener(): void
-    {
-        $app = app();
-        $binding = static::queryListenerBinding();
-
-        if ($app->bound($binding)) {
-            return;
-        }
-
-        DB::listen(function (QueryExecuted $query) {
-            static::recordQuery($query);
-        });
-
-        $app->instance($binding, true);
     }
 }

@@ -28,7 +28,7 @@ This tells every sensor to log to the `axiom` channel. Set comma-separated value
 
 ### Enabling and disabling sensors
 
-Each sensor's `channel` key is its on/off switch. Setting `observability-log.{requests,exceptions,jobs}.channel` to `null` (or leaving the env var unset and the config blank) makes that sensor a no-op — no events are listened to, no entries emitted. So if you want HTTP request and exception logging but not job logging, publish the config and set:
+Each sensor's `channel` key is its on/off switch. Setting `observability-log.{requests,exceptions,jobs}.channel` to `null` (or leaving the env var unset and the config blank) makes that sensor a no-op — entries are never built or emitted. (The underlying queue and exception listeners stay registered; they just short-circuit.) So if you want HTTP request and exception logging but not job logging, publish the config and set:
 
 ```php
 'jobs' => [
@@ -330,7 +330,7 @@ ExceptionSensor::message(fn (Throwable $e) => 'error.'.class_basename($e));
 
 Registration is automatic through the service provider; no `bootstrap/app.php` change required.
 
-The channel is driven by the package-level `OBSERVABILITY_LOG_CHANNEL` env var. Leave it unset to disable this sensor. To log jobs to a different channel than the rest of the package, publish the config and edit `observability-log.jobs.channel`.
+The channel is driven by the package-level `OBSERVABILITY_LOG_CHANNEL` env var. Leaving that unset disables every sensor; to disable only `JobSensor`, publish the config and set `observability-log.jobs.channel` to null. To log jobs to a different channel than the rest of the package, set `observability-log.jobs.channel` to a literal value.
 
 > **Trace correlation:** `Context::add('trace_id', ...)` propagates across queue serialization, so a `trace_id` set during a request automatically appears on every job dispatched from that request and on every attempt of those jobs. See [Trace ID](#trace-id).
 

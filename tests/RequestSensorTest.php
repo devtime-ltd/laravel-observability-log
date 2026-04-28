@@ -210,17 +210,6 @@ describe('request logging', function () {
         $middleware->handle(Request::create('/test'), fn () => new Response('OK', 200));
     });
 
-    it('does not register the DB query listener when channel list is empty', function () {
-        config(['observability-log.requests.channel' => ' , ,']);
-
-        app()->forgetInstance(RequestSensor::QUERY_LISTENER_BINDING);
-
-        $middleware = new RequestSensor;
-        $middleware->handle(Request::create('/test'), fn () => new Response('OK', 200));
-
-        expect(app()->bound(RequestSensor::QUERY_LISTENER_BINDING))->toBeFalse();
-    });
-
     it('returns the response even if logging fails', function () {
         config(['observability-log.requests.channel' => 'broken']);
 
