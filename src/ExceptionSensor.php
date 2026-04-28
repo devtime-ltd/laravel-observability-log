@@ -93,7 +93,7 @@ class ExceptionSensor
 
     private static function write(Throwable $e): void
     {
-        $level = self::sensorConfig('level', 'error');
+        $level = self::levelForStatus('failed');
 
         if (self::$usingCallback) {
             $result = self::safeCallback(self::$usingCallback, 'using', $e);

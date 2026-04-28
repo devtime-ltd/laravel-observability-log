@@ -173,8 +173,6 @@ return [
 
         'message' => 'error.exception',
 
-        'level' => 'error',
-
         'ignore' => [
             // e.g. \Illuminate\Auth\AuthenticationException::class
         ],

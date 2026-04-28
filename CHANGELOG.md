@@ -2,9 +2,13 @@
 
 ## [Unreleased]
 
+### Breaking
+
+- `ExceptionSensor` now reads its log level from `failed_level` rather than `level`. Every exception is by definition a failure, so the new key matches the semantic. The `exceptions.level` override no longer affects ExceptionSensor entries; if you previously set it, switch to `exceptions.failed_level` (or rely on the shared top-level `failed_level` default of `error`).
+
 ### Added
 
-- `failed_level` config key (top-level default `'error'`, override per sensor) used by sensors with a failure state (`JobSensor`, `CommandSensor`, `ScheduledTaskSensor`) when emitting a `status: failed` entry. `RequestSensor` also uses it for 5xx response codes (4xx and 2xx still use `level`). `ExceptionSensor` always uses `level` since every exception is a failure.
+- `failed_level` config key (top-level default `'error'`, override per sensor) used by sensors with a failure state (`JobSensor`, `CommandSensor`, `ScheduledTaskSensor`) when emitting a `status: failed` entry. `RequestSensor` also uses it for 5xx response codes (4xx and 2xx still use `level`). `ExceptionSensor` uses it for every entry.
 - `run_in_background` boolean field on every `schedule.task` entry so foreground vs background tasks are distinguishable from the entry alone (background entries from `schedule:finish` already lack `duration_ms` / `db_*`, but the explicit field is clearer).
 
 ## [0.4.0] - 2026-04-28

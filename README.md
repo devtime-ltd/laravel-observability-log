@@ -72,7 +72,7 @@ return [
 ];
 ```
 
-`level` is the default for every entry. `failed_level` is used instead when a sensor emits an entry with `status: failed` (a failed job attempt, a non-zero command exit, a failed scheduled task) or, on `RequestSensor`, when the response status code is 5xx. `ExceptionSensor` always uses `level` (every exception is a failure, so the distinction would be meaningless). `capture_headers` only applies to sensors that read it (request and exception). The `db_*` keys only apply to sensors that track DB stats (request, job, command, scheduled task).
+`level` is the default for every entry. `failed_level` is used instead when a sensor emits an entry with `status: failed` (a failed job attempt, a non-zero command exit, a failed scheduled task), on `RequestSensor` for 5xx responses, and on every `ExceptionSensor` entry (since every exception is by definition a failure). `capture_headers` only applies to sensors that read it (request and exception). The `db_*` keys only apply to sensors that track DB stats (request, job, command, scheduled task).
 
 ## Request sensor
 
@@ -226,7 +226,7 @@ Suppress specific exception classes (subclasses are matched via `is_a()`):
 ],
 ```
 
-Default level for exception entries is `error` (the only sensor that overrides the shared `info` default). Override via `observability-log.exceptions.level`.
+Exception entries log at `failed_level` (default `error`) since every exception is a failure. Override via `observability-log.exceptions.failed_level` or the top-level `observability-log.failed_level`.
 
 ### Customising the entry
 
