@@ -35,7 +35,7 @@ class JobSensor
      * delta covers exactly what happened during the attempt's wall-clock window
      * (including queries from any nested synchronous attempts dispatched inside).
      *
-     * @var array<string, array{startedAt: float, queryCountBaseline: int, queryTotalMsBaseline: float, slowQueriesBaseline: int, slowDroppedBaseline: int}>
+     * @var array<string, array{startedAt: float, memoryPeakBaseline: int, queryCountBaseline: int, queryTotalMsBaseline: float, slowQueriesBaseline: int, slowDroppedBaseline: int}>
      */
     private array $attempts = [];
 
@@ -162,6 +162,7 @@ class JobSensor
 
         $this->attempts[spl_object_hash($event->job)] = [
             'startedAt' => microtime(true),
+            'memoryPeakBaseline' => memory_get_peak_usage(true),
             'queryCountBaseline' => $this->dbQueryCount,
             'queryTotalMsBaseline' => $this->dbQueryTotalMs,
             'slowQueriesBaseline' => count($this->dbSlowQueries),
