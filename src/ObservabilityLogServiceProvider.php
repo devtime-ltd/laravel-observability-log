@@ -4,6 +4,7 @@ namespace DevtimeLtd\LaravelObservabilityLog;
 
 use Illuminate\Console\Events\CommandFinished;
 use Illuminate\Console\Events\CommandStarting;
+use Illuminate\Console\Events\ScheduledBackgroundTaskFinished;
 use Illuminate\Console\Events\ScheduledTaskFailed;
 use Illuminate\Console\Events\ScheduledTaskFinished;
 use Illuminate\Console\Events\ScheduledTaskSkipped;
@@ -58,6 +59,7 @@ class ObservabilityLogServiceProvider extends ServiceProvider
 
         Event::listen(ScheduledTaskStarting::class, [ScheduledTaskSensor::class, 'recordStarting']);
         Event::listen(ScheduledTaskFinished::class, [ScheduledTaskSensor::class, 'recordFinished']);
+        Event::listen(ScheduledBackgroundTaskFinished::class, [ScheduledTaskSensor::class, 'recordBackgroundFinished']);
         Event::listen(ScheduledTaskFailed::class, [ScheduledTaskSensor::class, 'recordFailed']);
         Event::listen(ScheduledTaskSkipped::class, [ScheduledTaskSensor::class, 'recordSkipped']);
 

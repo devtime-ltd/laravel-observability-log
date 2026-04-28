@@ -6,6 +6,7 @@ use Closure;
 use DevtimeLtd\LaravelObservabilityLog\Concerns\EmitsEntries;
 use DevtimeLtd\LaravelObservabilityLog\Concerns\TracksDatabaseQueries;
 use DevtimeLtd\LaravelObservabilityLog\Support\RequestContext;
+use Illuminate\Console\Events\ScheduledBackgroundTaskFinished;
 use Illuminate\Console\Events\ScheduledTaskFailed;
 use Illuminate\Console\Events\ScheduledTaskFinished;
 use Illuminate\Console\Events\ScheduledTaskSkipped;
@@ -79,6 +80,15 @@ class ScheduledTaskSensor
     }
 
     public static function recordFinished(ScheduledTaskFinished $event): void
+    {
+        if (self::normaliseChannels(self::sensorConfig('channel')) === []) {
+            return;
+        }
+
+        app(self::class)->emitTerminal($event, 'success', null);
+    }
+
+    public static function recordBackgroundFinished(ScheduledBackgroundTaskFinished $event): void
     {
         if (self::normaliseChannels(self::sensorConfig('channel')) === []) {
             return;
