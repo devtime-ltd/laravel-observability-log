@@ -111,6 +111,28 @@ describe('finished event', function () {
         ScheduledTaskSensor::recordFinished(new ScheduledTaskFinished($task, 0.1));
     });
 
+    it('emits status=skipped when a withoutOverlapping foreground task short-circuits inside run()', function () {
+        // Event::run() bails out early when shouldSkipDueToOverlapping
+        // returns true, leaving exitCode null. ScheduleRunCommand still
+        // dispatches ScheduledTaskFinished, so we must not record this
+        // as a successful run.
+        config(['observability-log.schedule.channel' => 'test']);
+
+        $task = scheduledEvent();
+        $task->withoutOverlapping = true;
+        // exitCode left null on purpose - the task did not run
+
+        $channel = Mockery::mock();
+        $channel->shouldReceive('log')
+            ->once()
+            ->withArgs(fn ($level, $message, $context) => $context['status'] === 'skipped');
+
+        Log::shouldReceive('channel')->with('test')->andReturn($channel);
+
+        ScheduledTaskSensor::recordStarting(new ScheduledTaskStarting($task));
+        ScheduledTaskSensor::recordFinished(new ScheduledTaskFinished($task, 0.1));
+    });
+
     it('drops the kicked-off ScheduledTaskFinished for runInBackground tasks', function () {
         // For background tasks Laravel fires ScheduledTaskFinished right
         // after spawning the child process (not on real completion);

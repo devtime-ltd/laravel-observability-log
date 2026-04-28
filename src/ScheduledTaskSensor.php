@@ -211,11 +211,23 @@ class ScheduledTaskSensor
         }
     }
 
+    /**
+     * Map a finished scheduled task's state to a status string.
+     *
+     * A null exitCode after ScheduledTaskFinished means Event::run()
+     * returned early, which only happens via shouldSkipDueToOverlapping
+     * (i.e. withoutOverlapping() blocked the run). Treat that as a
+     * skipped run so it isn't conflated with a successful one.
+     */
     private static function statusFromExitCode(ScheduledEvent $task): string
     {
         $exitCode = $task->exitCode ?? null;
 
-        return ($exitCode === null || $exitCode === 0) ? 'success' : 'failed';
+        if ($exitCode === null) {
+            return ! empty($task->withoutOverlapping) ? 'skipped' : 'success';
+        }
+
+        return $exitCode === 0 ? 'success' : 'failed';
     }
 
     private function emitTerminal(object $event, string $status, ?Throwable $exception): void
