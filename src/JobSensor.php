@@ -20,8 +20,6 @@ class JobSensor
     use EmitsEntries;
     use TracksDatabaseQueries;
 
-    public const QUERY_LISTENER_BINDING = 'devtime-ltd.observability-log.job-query-listener-registered';
-
     /** @var (Closure(object, array<string, mixed>): array<string, mixed>)|null */
     private static ?Closure $usingCallback = null;
 
@@ -31,10 +29,15 @@ class JobSensor
     /** @var (Closure(object): string)|string|null */
     private static Closure|string|null $messageOverride = null;
 
-    private ?float $startedAt = null;
-
-    /** True once a terminal event has emitted for the current attempt. */
-    private bool $emitted = true;
+    /**
+     * Per-attempt state keyed by spl_object_hash() of the queue Job. Each entry
+     * snapshots the cumulative trait counters at attempt start so the emitted
+     * delta covers exactly what happened during the attempt's wall-clock window
+     * (including queries from any nested synchronous attempts dispatched inside).
+     *
+     * @var array<string, array{startedAt: float, queryCountBaseline: int, queryTotalMsBaseline: float, slowQueriesBaseline: int, slowDroppedBaseline: int}>
+     */
+    private array $attempts = [];
 
     /**
      * Replace the default entry. Throw or non-array return falls back to default.
@@ -99,7 +102,7 @@ class JobSensor
             return;
         }
 
-        app(self::class)->onProcessing();
+        app(self::class)->onProcessing($event);
     }
 
     public static function recordProcessed(JobProcessed $event): void
@@ -133,7 +136,7 @@ class JobSensor
     {
         $instance = app(self::class);
 
-        if ($instance->startedAt === null) {
+        if ($instance->attempts === []) {
             return;
         }
 
@@ -145,26 +148,44 @@ class JobSensor
         return 'observability-log.jobs';
     }
 
-    protected static function queryListenerBinding(): string
+    private function onProcessing(JobProcessing $event): void
     {
-        return self::QUERY_LISTENER_BINDING;
-    }
+        $this->loadQueryConfig();
 
-    private function onProcessing(): void
-    {
-        $this->configureQueryTracking();
-        $this->startedAt = microtime(true);
-        $this->emitted = false;
+        if ($this->attempts === []) {
+            $this->resetQueryStats();
+        }
+
+        if (! is_object($event->job)) {
+            return;
+        }
+
+        $this->attempts[spl_object_hash($event->job)] = [
+            'startedAt' => microtime(true),
+            'queryCountBaseline' => $this->dbQueryCount,
+            'queryTotalMsBaseline' => $this->dbQueryTotalMs,
+            'slowQueriesBaseline' => count($this->dbSlowQueries),
+            'slowDroppedBaseline' => $this->dbSlowQueriesDropped,
+        ];
     }
 
     private function emitAttempt(object $event, string $status, ?Throwable $exception): void
     {
-        if ($this->emitted || $this->startedAt === null) {
+        $job = $event->job ?? null;
+        if (! is_object($job)) {
             return;
         }
 
+        $key = spl_object_hash($job);
+        if (! isset($this->attempts[$key])) {
+            return;
+        }
+
+        $attempt = $this->attempts[$key];
+        unset($this->attempts[$key]);
+
         try {
-            $measurements = $this->measurements();
+            $measurements = $this->measurements(microtime(true) - $attempt['startedAt'], $attempt);
             $entry = self::resolveEntry(
                 $event,
                 $measurements,
@@ -180,25 +201,10 @@ class JobSensor
         } catch (Throwable $e) {
             self::reportInternalError($e);
         } finally {
-            $this->emitted = true;
-            $this->startedAt = null;
+            if ($this->attempts === []) {
+                $this->resetQueryStats();
+            }
         }
-    }
-
-    /**
-     * @return array<string, mixed>
-     */
-    private function measurements(): array
-    {
-        $elapsed = microtime(true) - ($this->startedAt ?? microtime(true));
-
-        return array_merge(
-            [
-                'duration_ms' => round($elapsed * 1000, 2),
-                'memory_peak_mb' => round(memory_get_peak_usage(true) / 1024 / 1024, 2),
-            ],
-            $this->queryStats(),
-        );
     }
 
     /**

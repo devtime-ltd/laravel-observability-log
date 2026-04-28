@@ -15,7 +15,6 @@ beforeEach(function () {
     JobSensor::message(null);
     Context::flush();
     app()->forgetInstance(JobSensor::class);
-    app()->forgetInstance(JobSensor::QUERY_LISTENER_BINDING);
 });
 
 describe('channel resolution', function () {
@@ -322,6 +321,88 @@ describe('processed event', function () {
     });
 });
 
+describe('nested attempts', function () {
+    it('emits both outer and inner entries when an attempt dispatches a nested sync job', function () {
+        config(['observability-log.jobs.channel' => 'test']);
+
+        $captured = [];
+        $channel = Mockery::mock();
+        $channel->shouldReceive('log')
+            ->twice()
+            ->andReturnUsing(function ($level, $message, $context) use (&$captured) {
+                $captured[] = $context;
+            });
+
+        Log::shouldReceive('channel')->with('test')->andReturn($channel);
+
+        $outer = fakeJob(['getJobId' => 'outer']);
+        $inner = fakeJob(['getJobId' => 'inner']);
+
+        JobSensor::recordProcessing(new JobProcessing('redis', $outer));
+        JobSensor::recordProcessing(new JobProcessing('redis', $inner));
+        JobSensor::recordProcessed(new JobProcessed('redis', $inner));
+        JobSensor::recordProcessed(new JobProcessed('redis', $outer));
+
+        expect($captured)->toHaveCount(2);
+        expect($captured[0]['job_id'])->toBe('inner');
+        expect($captured[1]['job_id'])->toBe('outer');
+    });
+
+    it('does not let inner failure swallow the outer attempt entry', function () {
+        config(['observability-log.jobs.channel' => 'test']);
+
+        $captured = [];
+        $channel = Mockery::mock();
+        $channel->shouldReceive('log')
+            ->twice()
+            ->andReturnUsing(function ($level, $message, $context) use (&$captured) {
+                $captured[] = $context;
+            });
+
+        Log::shouldReceive('channel')->with('test')->andReturn($channel);
+
+        $outer = fakeJob(['getJobId' => 'outer']);
+        $inner = fakeJob(['getJobId' => 'inner']);
+
+        JobSensor::recordProcessing(new JobProcessing('redis', $outer));
+        JobSensor::recordProcessing(new JobProcessing('redis', $inner));
+        JobSensor::recordExceptionOccurred(new JobExceptionOccurred('redis', $inner, new RuntimeException('inner boom')));
+        JobSensor::recordProcessed(new JobProcessed('redis', $outer));
+
+        expect($captured)->toHaveCount(2);
+        expect($captured[0]['job_id'])->toBe('inner');
+        expect($captured[0]['status'])->toBe('failed');
+        expect($captured[1]['job_id'])->toBe('outer');
+        expect($captured[1]['status'])->toBe('processed');
+    });
+
+    it('routes terminal events to the matching attempt regardless of order', function () {
+        config(['observability-log.jobs.channel' => 'test']);
+
+        $captured = [];
+        $channel = Mockery::mock();
+        $channel->shouldReceive('log')
+            ->twice()
+            ->andReturnUsing(function ($level, $message, $context) use (&$captured) {
+                $captured[] = $context;
+            });
+
+        Log::shouldReceive('channel')->with('test')->andReturn($channel);
+
+        $a = fakeJob(['getJobId' => 'a']);
+        $b = fakeJob(['getJobId' => 'b']);
+
+        // Out-of-order: A starts, B starts, A finishes first, then B
+        JobSensor::recordProcessing(new JobProcessing('redis', $a));
+        JobSensor::recordProcessing(new JobProcessing('redis', $b));
+        JobSensor::recordProcessed(new JobProcessed('redis', $a));
+        JobSensor::recordProcessed(new JobProcessed('redis', $b));
+
+        expect($captured[0]['job_id'])->toBe('a');
+        expect($captured[1]['job_id'])->toBe('b');
+    });
+});
+
 describe('failed events', function () {
     it('emits status=failed with exception fields on JobExceptionOccurred', function () {
         config(['observability-log.jobs.channel' => 'test']);
@@ -439,13 +520,6 @@ describe('query tracking', function () {
         JobSensor::recordProcessed(new JobProcessed('redis', $job));
     });
 
-    it('does not register the DB listener when channel is empty', function () {
-        config(['observability-log.jobs.channel' => null]);
-
-        JobSensor::recordProcessing(new JobProcessing('redis', fakeJob()));
-
-        expect(app()->bound(JobSensor::QUERY_LISTENER_BINDING))->toBeFalse();
-    });
 });
 
 describe('trace_id', function () {
@@ -745,10 +819,9 @@ describe('error handling', function () {
         JobSensor::recordProcessing(new JobProcessing('redis', $job));
         JobSensor::recordProcessed(new JobProcessed('redis', $job));
 
-        // After failure, the next attempt cycle should still work
         $instance = app(JobSensor::class);
         expect((function () {
-            return $this->emitted;
-        })->call($instance))->toBeTrue();
+            return $this->attempts;
+        })->call($instance))->toBe([]);
     });
 });

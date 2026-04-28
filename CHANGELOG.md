@@ -4,6 +4,10 @@
 
 ## [0.3.0] - 2026-04-28
 
+### Breaking
+
+- Removed the public `RequestSensor::QUERY_LISTENER_BINDING` constant (added in v0.2.0). The DB query listener is now registered once by `ObservabilityLogServiceProvider`; use `ObservabilityLogServiceProvider::QUERY_LISTENER_BINDING` if you need to reference it from outside the package.
+
 ### Added
 
 - `JobSensor` listens to Laravel's queue lifecycle events and emits two structured entries: `job.queued` when a job is dispatched (one entry per dispatch), and `job.attempt` when a worker finishes or fails an attempt (one entry per attempt). `JobExceptionOccurred` and `JobFailed` are deduplicated so failed attempts produce exactly one entry. Registration is automatic through the service provider. Config section: `observability-log.jobs.*` (`channel`, `level`, `queued_message`, `attempt_message`, `collect_queries`, `slow_query_threshold`, `slow_queries_max_count`).
@@ -12,7 +16,9 @@
 
 ### Changed
 
-- Extracted shared DB-query tracking logic into a `TracksDatabaseQueries` trait used by both `RequestSensor` and `JobSensor`. No behavioural change to existing request entries.
+- Extracted shared DB-query tracking logic into a `TracksDatabaseQueries` trait used by both `RequestSensor` and `JobSensor`. The trait owns the `measurements()` builder for `duration_ms`, `memory_peak_mb`, and the `db_*` fields, so both sensors emit identical-shape measurement payloads.
+- The DB query listener is now a single shared `DB::listen()` registered by the service provider, dispatching to both sensors. Previously each sensor registered its own listener.
+- `JobSensor` tracks attempt state per job instance (keyed by `spl_object_hash`) instead of a single in-flight attempt. Nested synchronous job dispatch (an outer job that calls `Queue::push(new Inner)` inside `fire()`) now logs both attempts correctly; previously the outer attempt was silently dropped.
 
 ## [0.2.0] - 2026-04-20
 

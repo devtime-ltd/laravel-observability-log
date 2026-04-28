@@ -402,13 +402,17 @@ class IntegrationTest extends TestCase
         $this->assertArrayNotHasKey('command', $exception->context);
     }
 
-    public function test_query_listener_not_registered_when_collect_queries_disabled(): void
+    public function test_db_fields_omitted_when_collect_queries_disabled(): void
     {
         config(['observability-log.requests.collect_queries' => false]);
 
-        $this->get('/hello')->assertOk();
+        $this->get('/users')->assertOk();
 
-        $this->assertFalse($this->app->bound(RequestSensor::QUERY_LISTENER_BINDING));
+        $entry = $this->loggedEntry();
+
+        $this->assertArrayNotHasKey('db_query_count', $entry);
+        $this->assertArrayNotHasKey('db_query_total_ms', $entry);
+        $this->assertArrayNotHasKey('db_slow_queries', $entry);
     }
 
     public function test_trace_id_is_capped_at_configured_length(): void

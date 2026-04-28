@@ -14,7 +14,6 @@ beforeEach(function () {
     JobSensor::message(null);
     Context::flush();
     app()->forgetInstance(JobSensor::class);
-    app()->forgetInstance(JobSensor::QUERY_LISTENER_BINDING);
 
     config([
         'database.default' => 'testing',
@@ -168,6 +167,68 @@ it('does not bleed query counts between consecutive job attempts', function () {
     expect($captured[1]['db_query_count'])->toBe(1);
 });
 
+it('attributes queries from nested attempts to both outer and inner', function () {
+    config(['observability-log.jobs.channel' => 'test']);
+
+    $captured = [];
+    $channel = Mockery::mock();
+    $channel->shouldReceive('log')
+        ->twice()
+        ->andReturnUsing(function ($level, $message, $context) use (&$captured) {
+            $captured[] = $context;
+        });
+
+    Log::shouldReceive('channel')->with('test')->andReturn($channel);
+
+    $outer = fakeJob(['getJobId' => 'outer']);
+    $inner = fakeJob(['getJobId' => 'inner']);
+
+    JobSensor::recordProcessing(new JobProcessing('redis', $outer));
+    DB::table('test_items')->insert(['name' => 'pre-inner']);
+
+    JobSensor::recordProcessing(new JobProcessing('redis', $inner));
+    DB::table('test_items')->insert(['name' => 'inside-inner-1']);
+    DB::table('test_items')->insert(['name' => 'inside-inner-2']);
+    JobSensor::recordProcessed(new JobProcessed('redis', $inner));
+
+    DB::table('test_items')->insert(['name' => 'post-inner']);
+    JobSensor::recordProcessed(new JobProcessed('redis', $outer));
+
+    expect($captured[0]['job_id'])->toBe('inner');
+    expect($captured[0]['db_query_count'])->toBe(2);
+
+    expect($captured[1]['job_id'])->toBe('outer');
+    expect($captured[1]['db_query_count'])->toBe(4);
+});
+
+it('resets accumulated trait state once all attempts settle', function () {
+    config(['observability-log.jobs.channel' => 'test']);
+
+    $channel = Mockery::mock();
+    $channel->shouldReceive('log')->twice();
+    Log::shouldReceive('channel')->with('test')->andReturn($channel);
+
+    $first = fakeJob(['getJobId' => 'first']);
+    $second = fakeJob(['getJobId' => 'second']);
+
+    JobSensor::recordProcessing(new JobProcessing('redis', $first));
+    DB::table('test_items')->insert(['name' => 'a']);
+    DB::table('test_items')->insert(['name' => 'b']);
+    JobSensor::recordProcessed(new JobProcessed('redis', $first));
+
+    $instance = app(JobSensor::class);
+    $stats = (function () {
+        return [$this->dbQueryCount, count($this->dbSlowQueries)];
+    })->call($instance);
+
+    expect($stats[0])->toBe(0);
+    expect($stats[1])->toBe(0);
+
+    JobSensor::recordProcessing(new JobProcessing('redis', $second));
+    DB::table('test_items')->insert(['name' => 'c']);
+    JobSensor::recordProcessed(new JobProcessed('redis', $second));
+});
+
 it('does not track queries that fire outside an attempt window', function () {
     config(['observability-log.jobs.channel' => 'test']);
 
@@ -193,17 +254,28 @@ it('does not track queries that fire outside an attempt window', function () {
     expect($captured['db_query_count'])->toBe(1);
 });
 
-it('does not register the DB listener when collect_queries is disabled', function () {
+it('omits db_* fields from attempt entries when collect_queries is disabled even with queries running', function () {
     config([
         'observability-log.jobs.channel' => 'test',
         'observability-log.jobs.collect_queries' => false,
     ]);
 
-    Log::shouldReceive('channel')->with('test')->andReturn(
-        Mockery::mock()->shouldReceive('log')->getMock()
-    );
+    $captured = null;
+    $channel = Mockery::mock();
+    $channel->shouldReceive('log')
+        ->once()
+        ->andReturnUsing(function ($level, $message, $context) use (&$captured) {
+            $captured = $context;
+        });
 
-    JobSensor::recordProcessing(new JobProcessing('redis', fakeJob()));
+    Log::shouldReceive('channel')->with('test')->andReturn($channel);
 
-    expect(app()->bound(JobSensor::QUERY_LISTENER_BINDING))->toBeFalse();
+    $job = fakeJob();
+    JobSensor::recordProcessing(new JobProcessing('redis', $job));
+    DB::table('test_items')->get();
+    JobSensor::recordProcessed(new JobProcessed('redis', $job));
+
+    expect($captured)->not->toHaveKey('db_query_count');
+    expect($captured)->not->toHaveKey('db_query_total_ms');
+    expect($captured)->not->toHaveKey('db_slow_queries');
 });
