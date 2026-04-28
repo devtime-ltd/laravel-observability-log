@@ -133,6 +133,32 @@ describe('finished event', function () {
         ScheduledTaskSensor::recordFinished(new ScheduledTaskFinished($task, 0.1));
     });
 
+    it('emits skipped when a runInBackground task is overlap-skipped (no BackgroundFinished will fire)', function () {
+        // Race window: filtersPass let the task through, but
+        // Event::run()'s shouldSkipDueToOverlapping returned true so the
+        // background process never spawned and schedule:finish never
+        // runs. We must emit here or the run vanishes.
+        config(['observability-log.schedule.channel' => 'test']);
+
+        $task = scheduledEvent();
+        $task->runInBackground = true;
+        $task->withoutOverlapping = true;
+        // exitCode left null - the task did not run
+
+        $channel = Mockery::mock();
+        $channel->shouldReceive('log')
+            ->once()
+            ->withArgs(function ($level, $message, $context) {
+                return $context['status'] === 'skipped'
+                    && ! array_key_exists('duration_ms', $context);
+            });
+
+        Log::shouldReceive('channel')->with('test')->andReturn($channel);
+
+        ScheduledTaskSensor::recordStarting(new ScheduledTaskStarting($task));
+        ScheduledTaskSensor::recordFinished(new ScheduledTaskFinished($task, 0.1));
+    });
+
     it('drops the kicked-off ScheduledTaskFinished for runInBackground tasks', function () {
         // For background tasks Laravel fires ScheduledTaskFinished right
         // after spawning the child process (not on real completion);
