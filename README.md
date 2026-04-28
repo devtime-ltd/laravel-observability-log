@@ -6,9 +6,9 @@ Ships three sensors today (`RequestSensor`, `ExceptionSensor`, `JobSensor`), wit
 
 ## Design philosophy
 
-- **Lean defaults.** Entries ship with method, path, status, duration, user, ip, trace_id.
-- **Opinionated top-level keys.** `scheme`, `host`, `query_string`, `action`, `user_agent`, `referer` are promoted to the top level for simpler filtering.
-- **Richer collection via config.** Full header capture and structured stack traces with argument values are opt-in.
+- **Lean defaults.** Every sensor ships with the fields most useful for filtering and aggregation, nothing more.
+- **Opinionated top-level keys.** Common filter fields are promoted out of nested structures so dashboard queries hit a single key.
+- **Richer collection via config.** Header capture, structured stack traces with argument values, slow query capture, and similar are opt-in.
 
 ## Installation
 
@@ -26,17 +26,6 @@ OBSERVABILITY_LOG_CHANNEL=axiom
 
 This tells every sensor to log to the `axiom` channel. Set comma-separated values (e.g. `axiom,betterstack`) to log to multiple channels via `Log::stack()`. To log to different channels per sensor, publish the config and set each sensor's `channel` key to a literal value or a dedicated env var of your choosing.
 
-### Enabling and disabling sensors
-
-Each sensor's `channel` key is its on/off switch. Setting `observability-log.{requests,exceptions,jobs}.channel` to `null` (or leaving the env var unset and the config blank) makes that sensor a no-op — entries are never built or emitted. (The underlying queue and exception listeners stay registered; they just short-circuit.) So if you want HTTP request and exception logging but not job logging, publish the config and set:
-
-```php
-'jobs' => [
-    'channel' => null,
-    // ...
-],
-```
-
 Then register the request middleware in `bootstrap/app.php`:
 
 ```php
@@ -47,7 +36,7 @@ use DevtimeLtd\LaravelObservabilityLog\RequestSensor;
 })
 ```
 
-`ExceptionSensor` is registered automatically; no bootstrap change required.
+`ExceptionSensor` and `JobSensor` are registered automatically; no bootstrap change required.
 
 Publish the config file to customise defaults:
 
@@ -55,11 +44,20 @@ Publish the config file to customise defaults:
 php artisan vendor:publish --tag=observability-log
 ```
 
+### Enabling and disabling sensors
+
+Each sensor's `channel` is its on/off switch. Set it to `null` to silence one sensor; the underlying queue and exception listeners stay registered but skip emission. Example, keep request and exception logging, drop job logging:
+
+```php
+'jobs' => [
+    'channel' => null,
+    // ...
+],
+```
+
 ## Request sensor
 
-`RequestSensor` is a middleware that logs structured request data (method, URL, status, duration, DB query stats, memory) to one or more log channels.
-
-The channel is driven by the package-level `OBSERVABILITY_LOG_CHANNEL` env var from the [Quick start](#quick-start) section. Leave it unset to disable the middleware; it is a no-op without a resolved channel. To log this sensor to a different channel than the rest of the package, publish the config and edit `observability-log.requests.channel`.
+`RequestSensor` is a middleware that logs structured request data (method, URL, status, duration, DB query stats, memory) to the configured channel.
 
 ### Logged fields
 
@@ -78,7 +76,7 @@ The channel is driven by the package-level `OBSERVABILITY_LOG_CHANNEL` env var f
 | `content_type`       | Response Content-Type                                                |
 | `response_size`      | Response body size in bytes                                          |
 | `user_id`            | Authenticated user ID (null if guest)                                |
-| `ip`                 | Client IP (supports obfuscation, see below)                          |
+| `ip`                 | Client IP (supports obfuscation, see [below](#ip-obfuscation))       |
 | `user_agent`         | User-Agent header value                                              |
 | `referer`            | Referer header value                                                 |
 | `duration_ms`        | Total request time in milliseconds                                   |
@@ -91,81 +89,24 @@ The channel is driven by the package-level `OBSERVABILITY_LOG_CHANNEL` env var f
 
 ### Options
 
-Options live under `config/observability-log.php` in the `requests` section.
-
-#### Log message
-
-The log message used for request entries. Default: `'http.request'`.
-
 ```php
 'requests' => [
+    'channel' => env('OBSERVABILITY_LOG_CHANNEL'),
     'message' => 'http.request',
+    'level' => 'info',
+    'obfuscate_ip' => false, // false or callable, e.g. ObfuscateIp::level(2)
+    'db_collect_queries' => true,
+    'db_slow_query_threshold' => 100, // null to disable slow query collection
+    'db_slow_queries_max_count' => 100, // null or 0 to disable the cap
+    'capture_headers' => env('OBSERVABILITY_LOG_CAPTURE_HEADERS', false),
 ],
 ```
 
-Override at runtime via `RequestSensor::message()` in your `AppServiceProvider::boot()`, either a fixed string or a callback:
+`db_collect_queries` toggles the DB stats fields entirely. `db_slow_query_threshold` is in milliseconds and only affects slow capture, not counts. `db_slow_queries_max_count` caps slow queries per request and appends `['truncated' => 'N more slow queries dropped']` once exceeded.
 
-```php
-use DevtimeLtd\LaravelObservabilityLog\RequestSensor;
+### IP obfuscation
 
-// Fixed string
-RequestSensor::message('api.request');
-
-// Dynamic based on request
-RequestSensor::message(function ($request, $response) {
-    return $request->is('api/*') ? 'api.request' : 'web.request';
-});
-```
-
-Pass `null` to revert to the config default.
-
-#### Log level
-
-The PSR-3 log level that request entries are logged at. Default: `'info'`. All PSR-3 levels (`debug`, `info`, `notice`, `warning`, `error`, `critical`, `alert`, `emergency`) are valid.
-
-```php
-'requests' => [
-    'level' => 'debug',
-],
-```
-
-#### Database query collection
-
-Disable query measurement to skip the `DB::listen()` overhead:
-
-```php
-'requests' => [
-    'collect_queries' => false,
-],
-```
-
-This omits `db_query_count`, `db_query_total_ms`, and `db_slow_queries` from the log entry. Default: `true`.
-
-#### Slow query threshold
-
-Threshold in milliseconds for capturing slow queries:
-
-```php
-'requests' => [
-    'slow_query_threshold' => 500,
-],
-```
-
-Set to `null` to disable slow query collection while still tracking `db_query_count` and `db_query_total_ms`. Default: `100`.
-
-#### Slow queries per-request cap
-
-```php
-'requests' => [
-    'slow_queries_max_count' => 100,
-],
-```
-
-Limits how many slow queries are captured in a single request. When the cap is hit, a truncation marker (`['truncated' => 'N more slow queries dropped']`) is appended to `db_slow_queries`. Default: `100`. Set to `null` (or `0`) to disable.
-
-#### IP obfuscation
-
-Mask client IPs using the built-in `ObfuscateIp` class. Supports four levels.
+Mask client IPs using the built-in `ObfuscateIp` class:
 
 | Level | IPv4 example (`198.51.100.123`) | IPv6  |
 | ----- | ------------------------------- | ----- |
@@ -182,36 +123,24 @@ use DevtimeLtd\LaravelObservabilityLog\ObfuscateIp;
 ],
 ```
 
-You can also pass any callable for custom masking:
+Or pass any callable for custom masking, e.g. `fn (?string $ip) => 'redacted'`.
 
-```php
-'requests' => [
-    'obfuscate_ip' => fn (?string $ip) => 'redacted',
-],
-```
+### Customising the entry
 
-Default: `false` (no masking).
-
-### Extending log entries
-
-Use `RequestSensor::extend()` to add project-specific fields, or overwrite default ones. Call this in your `AppServiceProvider::boot()`:
+`RequestSensor::extend/using/message` are static, set them in `AppServiceProvider::boot()`. `using()` replaces the default entry, `extend()` runs after it (so they compose). Pass `null` to revert any of them to the config default.
 
 ```php
 use DevtimeLtd\LaravelObservabilityLog\RequestSensor;
 
+// Add or override fields on the default entry
 RequestSensor::extend(function ($request, $response, $entry) {
     $entry['tenant_id'] = $request->header('X-Tenant-ID');
     return $entry;
 });
-```
 
-### Custom log entry
-
-To completely replace the default entry fields with your own, use `RequestSensor::using()`. The callback receives the request, response, and a measurements array:
-
-```php
-use DevtimeLtd\LaravelObservabilityLog\RequestSensor;
-
+// Replace the default entry. $measurements contains duration_ms,
+// memory_peak_mb, and (when collection is on) db_query_count /
+// db_query_total_ms / db_slow_queries.
 RequestSensor::using(function ($request, $response, $measurements) {
     return [
         'method' => $request->method(),
@@ -220,17 +149,14 @@ RequestSensor::using(function ($request, $response, $measurements) {
         'duration_ms' => $measurements['duration_ms'],
     ];
 });
+
+// Customise the log message (string or callback).
+RequestSensor::message(fn ($request, $response) => $request->is('api/*') ? 'api.request' : 'web.request');
 ```
-
-`$measurements` contains the collected metrics based on config: `duration_ms`, `memory_peak_mb`, and when query collection is enabled, `db_query_count`, `db_query_total_ms`, `db_slow_queries`.
-
-`extend()` runs after `using()`, so you can use both.
 
 ## Exception sensor
 
 `ExceptionSensor` hooks Laravel's exception reporter (`$handler->reportable(...)`) and emits a structured entry for every unhandled exception that Laravel would normally report. Registration is automatic through the service provider.
-
-The channel is driven by the package-level `OBSERVABILITY_LOG_CHANNEL` env var. Leave it unset to disable this sensor. To log exceptions to a different channel than request entries, publish the config and edit `observability-log.exceptions.channel`.
 
 > **PII note:** `message` and each entry in `previous[]` is logged verbatim. Some exceptions embed user data (e.g. `PDOException` on a `UNIQUE` constraint may contain `Duplicate entry 'alice@example.com' for key 'users_email'`). Strip or hash via `ExceptionSensor::extend()` if needed.
 
@@ -326,11 +252,9 @@ ExceptionSensor::message(fn (Throwable $e) => 'error.'.class_basename($e));
 `JobSensor` listens to Laravel's queue lifecycle events and emits two structured entries:
 
 - `job.queued` when a job is dispatched (one entry per dispatch)
-- `job.attempt` when a worker finishes — or fails — a single attempt (one entry per attempt, regardless of how it ended)
+- `job.attempt` when a worker finishes (or fails) a single attempt (one entry per attempt, regardless of how it ended)
 
 Registration is automatic through the service provider; no `bootstrap/app.php` change required.
-
-The channel is driven by the package-level `OBSERVABILITY_LOG_CHANNEL` env var. Leaving that unset disables every sensor; to disable only `JobSensor`, publish the config and set `observability-log.jobs.channel` to null. To log jobs to a different channel than the rest of the package, set `observability-log.jobs.channel` to a literal value.
 
 > **Trace correlation:** `Context::add('trace_id', ...)` propagates across queue serialization, so a `trace_id` set during a request automatically appears on every job dispatched from that request and on every attempt of those jobs. See [Trace ID](#trace-id).
 
@@ -369,27 +293,25 @@ The channel is driven by the package-level `OBSERVABILITY_LOG_CHANNEL` env var. 
 
 ### Options
 
-Options live under `config/observability-log.php` in the `jobs` section.
-
 ```php
 'jobs' => [
     'channel' => env('OBSERVABILITY_LOG_CHANNEL'),
     'level' => 'info',
     'queued_message' => 'job.queued',
     'attempt_message' => 'job.attempt',
-    'collect_queries' => true,
-    'slow_query_threshold' => 100,
-    'slow_queries_max_count' => 100,
+    'db_collect_queries' => true,
+    'db_slow_query_threshold' => 100, // null to disable slow query collection
+    'db_slow_queries_max_count' => 100, // null or 0 to disable the cap
 ],
 ```
 
-`collect_queries`, `slow_query_threshold`, and `slow_queries_max_count` behave the same as on the request sensor, scoped per attempt.
+The `db_*` keys behave the same as on the request sensor, scoped per attempt.
 
 ### Failed attempts
 
 Each attempt produces exactly one `job.attempt` entry whether it succeeds, throws (and may retry), throws on the final attempt, or is failed manually via `$job->fail()`. `JobExceptionOccurred` and `JobFailed` are deduplicated so you never see two entries for the same attempt.
 
-If a job throws and is permanently failed, you'll typically also see an `error.exception` entry from `ExceptionSensor` — the queue worker still reports the exception through Laravel's exception handler. Both entries share `trace_id` when one is resolvable.
+If a job throws and is permanently failed, you'll typically also see an `error.exception` entry from `ExceptionSensor`; the queue worker still reports the exception through Laravel's exception handler. Both entries share `trace_id` when one is resolvable.
 
 ### Customising the entry
 
@@ -426,7 +348,7 @@ JobSensor::message(fn ($event) => $event instanceof JobQueued ? 'queue.dispatche
 
 ## Header capture
 
-Off by default on both sensors; typical payload adds 1 to 3 KB per entry. Enable for the whole package:
+Off by default on the request and exception sensors (job entries don't capture headers). Typical payload adds 1 to 3 KB per entry. Enable for the whole package:
 
 ```env
 OBSERVABILITY_LOG_CAPTURE_HEADERS=true
@@ -517,10 +439,11 @@ Resolved ids are capped at `observability-log.trace_id_max_length` bytes (defaul
 
 Tested with repeated-request scenarios in `tests/IntegrationTest.php`. No extra setup required:
 
-- Static callbacks (set in `AppServiceProvider::boot()`) persist across requests.
-- The DB query listener registers once per worker via a container-scoped flag.
+- Static callbacks set in `AppServiceProvider::boot()` persist across requests.
+- A single shared `DB::listen` registers once per worker in the service provider and dispatches to whichever sensor is currently active.
+- `JobSensor` snapshots query counters and `memory_get_peak_usage()` per attempt and emits the delta, so long-lived workers report attempt-specific values rather than process-cumulative ones.
 - User callbacks (`using` / `extend` / `message`) run inside `try/catch`; a throw falls back to the default entry and surfaces via `Log::error()`.
-- Exception re-entrance is guarded against logger failures triggering Laravel to re-report.
+- Exception re-entrance is guarded so a logger failure cannot trigger Laravel to re-report.
 
 ## Roadmap
 

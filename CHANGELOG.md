@@ -7,10 +7,11 @@
 ### Breaking
 
 - Removed the public `RequestSensor::QUERY_LISTENER_BINDING` constant (added in v0.2.0). The DB query listener is now registered once by `ObservabilityLogServiceProvider`; use `ObservabilityLogServiceProvider::QUERY_LISTENER_BINDING` if you need to reference it from outside the package.
+- Renamed DB query config keys to share the `db_` prefix of the fields they govern: `requests.collect_queries` -> `requests.db_collect_queries`, `requests.slow_query_threshold` -> `requests.db_slow_query_threshold`, `requests.slow_queries_max_count` -> `requests.db_slow_queries_max_count`. Same rename on `jobs.*`. Republish or rename in your published config.
 
 ### Added
 
-- `JobSensor` listens to Laravel's queue lifecycle events and emits two structured entries: `job.queued` when a job is dispatched (one entry per dispatch), and `job.attempt` when a worker finishes or fails an attempt (one entry per attempt). `JobExceptionOccurred` and `JobFailed` are deduplicated so failed attempts produce exactly one entry. Registration is automatic through the service provider. Config section: `observability-log.jobs.*` (`channel`, `level`, `queued_message`, `attempt_message`, `collect_queries`, `slow_query_threshold`, `slow_queries_max_count`).
+- `JobSensor` listens to Laravel's queue lifecycle events and emits two structured entries: `job.queued` when a job is dispatched (one entry per dispatch), and `job.attempt` when a worker finishes or fails an attempt (one entry per attempt). `JobExceptionOccurred` and `JobFailed` are deduplicated so failed attempts produce exactly one entry. Registration is automatic through the service provider. Config section: `observability-log.jobs.*` (`channel`, `level`, `queued_message`, `attempt_message`, `db_collect_queries`, `db_slow_query_threshold`, `db_slow_queries_max_count`).
 - Per-attempt DB query stats on `job.attempt` entries (`db_query_count`, `db_query_total_ms`, `db_slow_queries`) using the same controls as `RequestSensor`.
 - `Throwable::context()` capture on `ExceptionSensor` entries, attached as `exception_context` on the root frame and `context` on each `previous[]` frame when present.
 
@@ -20,6 +21,7 @@
 - The DB query listener is now a single shared `DB::listen()` registered by the service provider, dispatching to both sensors. Previously each sensor registered its own listener.
 - `JobSensor` tracks attempt state per job instance (keyed by `spl_object_hash`) instead of a single in-flight attempt. Nested synchronous job dispatch (an outer job that calls `Queue::push(new Inner)` inside `fire()`) now logs both attempts correctly; previously the outer attempt was silently dropped.
 - `JobSensor.memory_peak_mb` is now the memory peak gained during the attempt's window (delta from `memory_get_peak_usage()` at attempt start), not the cumulative process peak. On long-lived queue workers this fixes the previous behaviour where one heavy job's peak would be reported on every subsequent attempt.
+- README tightened for v0.3.0: per-sensor "channel is driven by..." paragraphs dropped (the Quick start section already covers it), `RequestSensor` options collapsed to a single config block, `extend`/`using`/`message` subsections merged into one "Customising the entry" block per sensor, Octane bullets refreshed for the v0.3.0 architecture, and the header-capture wording corrected (job entries do not capture headers).
 
 ## [0.2.0] - 2026-04-20
 
@@ -69,7 +71,7 @@ Extracted from [devtime-ltd/laravel-axiom-log](https://github.com/devtime-ltd/la
 1. `composer require devtime-ltd/laravel-observability-log`
 2. Update the middleware import from `DevtimeLtd\LaravelAxiomLog\LogRequest` to ~~`DevtimeLtd\LaravelObservabilityLog\LogRequest`~~ `DevtimeLtd\LaravelObservabilityLog\RequestSensor` (renamed in v0.2.0).
 3. Republish the config: `php artisan vendor:publish --tag=observability-log` (the old `config/log-request.php` can be deleted).
-4. ~~Existing `LOG_REQUESTS_*` env vars continue to work unchanged.~~ (env vars were renamed to `OBSERVABILITY_LOG_*` in v0.2.0 — see the v0.2.0 migration above.)
+4. ~~Existing `LOG_REQUESTS_*` env vars continue to work unchanged.~~ (env vars were renamed to `OBSERVABILITY_LOG_*` in v0.2.0; see the v0.2.0 migration above.)
 
 [0.3.0]: https://github.com/devtime-ltd/laravel-observability-log/releases/tag/v0.3.0
 [0.2.0]: https://github.com/devtime-ltd/laravel-observability-log/releases/tag/v0.2.0
