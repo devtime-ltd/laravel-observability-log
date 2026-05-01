@@ -95,6 +95,7 @@ return [
 | `status`             | Response status code                                                 |
 | `content_type`       | Response Content-Type                                                |
 | `response_size`      | Response body size in bytes                                          |
+| `redirect_to`        | `Location` header on redirect responses (see [Redirect target](#redirect-target)) |
 | `user_id`            | Authenticated user ID (null if guest)                                |
 | `ip`                 | Client IP (supports obfuscation, see [below](#ip-obfuscation))       |
 | `user_agent`         | User-Agent header value                                              |
@@ -138,6 +139,19 @@ use DevtimeLtd\LaravelObservabilityLog\ObfuscateIp;
 ```
 
 Or pass any callable for custom masking, e.g. `fn (?string $ip) => 'redacted'`.
+
+### Redirect target
+
+When the response is a redirect (`Response::isRedirect()`: 201/301/302/303/307/308), `redirect_to` carries the raw `Location` header value. Relative paths are not normalised. When `Location` is missing on a redirect status, `redirect_to` is emitted as `null`; on non-redirect statuses, the field is absent.
+
+> **Note:** redirect targets sometimes embed short-lived secrets (S3 pre-signed URLs, OAuth `state`/`code`, signed routes). The value is already going to the client so logging it server-side adds no new external exposure, but log-pipeline secret scanners may still flag it. Drop or rewrite the field via `RequestSensor::extend()` if needed:
+>
+> ```php
+> RequestSensor::extend(function ($request, $response, $entry) {
+>     unset($entry['redirect_to']);
+>     return $entry;
+> });
+> ```
 
 ### Customising the entry
 

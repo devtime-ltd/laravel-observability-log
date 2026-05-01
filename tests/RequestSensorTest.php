@@ -6,6 +6,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Context;
 use Illuminate\Support\Facades\Log;
 use Symfony\Component\HttpFoundation\Response;
+use Symfony\Component\HttpFoundation\StreamedResponse;
 
 describe('request logging', function () {
     beforeEach(function () {
@@ -616,6 +617,196 @@ describe('using callback', function () {
         $middleware = new RequestSensor;
         $request = Request::create('/test');
         $middleware->handle($request, fn () => new Response('OK', 200));
+    });
+});
+
+describe('redirect target capture', function () {
+    beforeEach(function () {
+        RequestSensor::using(null);
+        RequestSensor::extend(null);
+        RequestSensor::message(null);
+    });
+
+    it('captures redirect_to for 301 responses', function () {
+        config(['observability-log.requests.channel' => 'test-channel']);
+
+        $channel = Mockery::mock();
+        $channel->shouldReceive('log')
+            ->once()
+            ->withArgs(fn ($level, $message, array $context) => ($context['redirect_to'] ?? null) === '/new-home'
+                && $context['status'] === 301);
+
+        Log::shouldReceive('channel')->with('test-channel')->andReturn($channel);
+
+        (new RequestSensor)->handle(
+            Request::create('/old-home'),
+            fn () => new Response('', 301, ['Location' => '/new-home'])
+        );
+    });
+
+    it('captures redirect_to for 302 responses', function () {
+        config(['observability-log.requests.channel' => 'test-channel']);
+
+        $channel = Mockery::mock();
+        $channel->shouldReceive('log')
+            ->once()
+            ->withArgs(fn ($level, $message, array $context) => ($context['redirect_to'] ?? null) === '/login'
+                && $context['status'] === 302);
+
+        Log::shouldReceive('channel')->with('test-channel')->andReturn($channel);
+
+        (new RequestSensor)->handle(
+            Request::create('/dashboard'),
+            fn () => new Response('', 302, ['Location' => '/login'])
+        );
+    });
+
+    it('captures redirect_to for 303 responses', function () {
+        config(['observability-log.requests.channel' => 'test-channel']);
+
+        $channel = Mockery::mock();
+        $channel->shouldReceive('log')
+            ->once()
+            ->withArgs(fn ($level, $message, array $context) => ($context['redirect_to'] ?? null) === '/result'
+                && $context['status'] === 303);
+
+        Log::shouldReceive('channel')->with('test-channel')->andReturn($channel);
+
+        (new RequestSensor)->handle(
+            Request::create('/submit', 'POST'),
+            fn () => new Response('', 303, ['Location' => '/result'])
+        );
+    });
+
+    it('captures redirect_to for 307 responses', function () {
+        config(['observability-log.requests.channel' => 'test-channel']);
+
+        $channel = Mockery::mock();
+        $channel->shouldReceive('log')
+            ->once()
+            ->withArgs(fn ($level, $message, array $context) => ($context['redirect_to'] ?? null) === '/temp-target'
+                && $context['status'] === 307);
+
+        Log::shouldReceive('channel')->with('test-channel')->andReturn($channel);
+
+        (new RequestSensor)->handle(
+            Request::create('/source'),
+            fn () => new Response('', 307, ['Location' => '/temp-target'])
+        );
+    });
+
+    it('captures redirect_to for 308 responses', function () {
+        config(['observability-log.requests.channel' => 'test-channel']);
+
+        $channel = Mockery::mock();
+        $channel->shouldReceive('log')
+            ->once()
+            ->withArgs(fn ($level, $message, array $context) => ($context['redirect_to'] ?? null) === '/perm-target'
+                && $context['status'] === 308);
+
+        Log::shouldReceive('channel')->with('test-channel')->andReturn($channel);
+
+        (new RequestSensor)->handle(
+            Request::create('/source'),
+            fn () => new Response('', 308, ['Location' => '/perm-target'])
+        );
+    });
+
+    it('captures redirect_to for 201 Created responses with a Location header', function () {
+        config(['observability-log.requests.channel' => 'test-channel']);
+
+        $channel = Mockery::mock();
+        $channel->shouldReceive('log')
+            ->once()
+            ->withArgs(fn ($level, $message, array $context) => ($context['redirect_to'] ?? null) === '/users/123'
+                && $context['status'] === 201);
+
+        Log::shouldReceive('channel')->with('test-channel')->andReturn($channel);
+
+        (new RequestSensor)->handle(
+            Request::create('/users', 'POST'),
+            fn () => new Response('', 201, ['Location' => '/users/123'])
+        );
+    });
+
+    it('captures absolute external Location verbatim', function () {
+        config(['observability-log.requests.channel' => 'test-channel']);
+
+        $channel = Mockery::mock();
+        $channel->shouldReceive('log')
+            ->once()
+            ->withArgs(fn ($level, $message, array $context) => ($context['redirect_to'] ?? null) === 'https://example.com/foo?x=1');
+
+        Log::shouldReceive('channel')->with('test-channel')->andReturn($channel);
+
+        (new RequestSensor)->handle(
+            Request::create('/probe'),
+            fn () => new Response('', 302, ['Location' => 'https://example.com/foo?x=1'])
+        );
+    });
+
+    it('omits redirect_to for 200 responses', function () {
+        config(['observability-log.requests.channel' => 'test-channel']);
+
+        $channel = Mockery::mock();
+        $channel->shouldReceive('log')
+            ->once()
+            ->withArgs(fn ($level, $message, array $context) => ! array_key_exists('redirect_to', $context));
+
+        Log::shouldReceive('channel')->with('test-channel')->andReturn($channel);
+
+        (new RequestSensor)->handle(Request::create('/test'), fn () => new Response('OK', 200));
+    });
+
+    it('omits redirect_to for 304 Not Modified', function () {
+        config(['observability-log.requests.channel' => 'test-channel']);
+
+        $channel = Mockery::mock();
+        $channel->shouldReceive('log')
+            ->once()
+            ->withArgs(fn ($level, $message, array $context) => ! array_key_exists('redirect_to', $context)
+                && $context['status'] === 304);
+
+        Log::shouldReceive('channel')->with('test-channel')->andReturn($channel);
+
+        (new RequestSensor)->handle(
+            Request::create('/cached'),
+            fn () => new Response('', 304)
+        );
+    });
+
+    it('emits redirect_to as null when a redirect status has no Location header', function () {
+        config(['observability-log.requests.channel' => 'test-channel']);
+
+        $channel = Mockery::mock();
+        $channel->shouldReceive('log')
+            ->once()
+            ->withArgs(fn ($level, $message, array $context) => array_key_exists('redirect_to', $context)
+                && $context['redirect_to'] === null
+                && $context['status'] === 302);
+
+        Log::shouldReceive('channel')->with('test-channel')->andReturn($channel);
+
+        (new RequestSensor)->handle(
+            Request::create('/broken'),
+            fn () => new Response('', 302)
+        );
+    });
+
+    it('captures redirect_to on streaming redirect responses', function () {
+        config(['observability-log.requests.channel' => 'test-channel']);
+
+        $channel = Mockery::mock();
+        $channel->shouldReceive('log')
+            ->once()
+            ->withArgs(fn ($level, $message, array $context) => ($context['redirect_to'] ?? null) === '/streamed-target');
+
+        Log::shouldReceive('channel')->with('test-channel')->andReturn($channel);
+
+        (new RequestSensor)->handle(
+            Request::create('/stream'),
+            fn () => new StreamedResponse(fn () => null, 302, ['Location' => '/streamed-target'])
+        );
     });
 });
 

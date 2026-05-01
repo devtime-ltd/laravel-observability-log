@@ -195,6 +195,10 @@ class RequestSensor
             'referer' => $request->header('referer'),
         ];
 
+        if ($response && $response->isRedirect()) {
+            $entry['redirect_to'] = $response->headers->get('Location');
+        }
+
         $queryString = $request->getQueryString();
         if ($queryString !== null && $queryString !== '') {
             $entry['query_string'] = $queryString;
