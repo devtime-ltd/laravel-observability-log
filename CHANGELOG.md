@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-05-01
+
+### Added
+
+- `redirect_to` field on `http.request` entries when the response is a redirect (`Response::isRedirect()`: 201/301/302/303/307/308). Captures the raw `Location` header verbatim; emitted as `null` when the header is missing. Absent on non-redirect statuses.
+
 ## [0.5.0] - 2026-04-28
 
 ### Breaking
@@ -100,6 +106,7 @@ Extracted from [devtime-ltd/laravel-axiom-log](https://github.com/devtime-ltd/la
 3. Republish the config: `php artisan vendor:publish --tag=observability-log` (the old `config/log-request.php` can be deleted).
 4. ~~Existing `LOG_REQUESTS_*` env vars continue to work unchanged.~~ (env vars were renamed to `OBSERVABILITY_LOG_*` in v0.2.0; see the v0.2.0 migration above.)
 
+[0.5.1]: https://github.com/devtime-ltd/laravel-observability-log/releases/tag/v0.5.1
 [0.5.0]: https://github.com/devtime-ltd/laravel-observability-log/releases/tag/v0.5.0
 [0.4.0]: https://github.com/devtime-ltd/laravel-observability-log/releases/tag/v0.4.0
 [0.3.0]: https://github.com/devtime-ltd/laravel-observability-log/releases/tag/v0.3.0
