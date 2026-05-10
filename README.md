@@ -565,6 +565,18 @@ When nothing resolves, the `trace_id` field is omitted.
 
 Resolved ids are capped at `observability-log.trace_id_max_length` bytes (default 128). Set to `null` or `0` to disable.
 
+## Global fields via Context
+
+Note these Trace IDs aren't special: anything on Laravel's `Context` is attached to every log record by the built-in `ContextLogProcessor`. A single `Context::add()` call (in middleware, a listener, or `AppServiceProvider::boot()`) surfaces a field on every sensor entry without any per-sensor wiring.
+
+```php
+use Illuminate\Support\Facades\Context;
+
+Context::add('release_id', config('app.release_id'));
+```
+
+Every `http.request`, `job.attempt`, `console.command`, and `schedule.task` then carries `release_id`. Useful for deploy-line overlays (`min(_time) where release_id = X`), tenant tagging, environment markers, and similar. `Context` propagates through queue serialization, so jobs dispatched from a request keep the same value.
+
 ## Octane, RoadRunner, Swoole
 
 Tested with repeated-request scenarios in `tests/IntegrationTest.php`. No extra setup required:
@@ -588,7 +600,6 @@ Each row shows the event name emitted on the configured log channel.
 - [ ] `OutgoingHttpSensor` (`http.outgoing`), outgoing HTTP via the `Http` facade plus optional Guzzle middleware
 - [ ] `MailSensor` (`mail.sent`), mail delivery
 - [ ] `NotificationSensor` (`notification.sent`), notification delivery
-- [ ] `observability:mark-deploy` Artisan command, deploy markers for graph overlays
 
 ## Testing
 
