@@ -133,6 +133,16 @@ class CommandSensor
         $command = $this->commands[$key];
         unset($this->commands[$key]);
 
+        $status = $event->exitCode === 0 ? 'success' : 'failed';
+
+        if ($status !== 'failed' && self::sensorConfig('failures_only', false)) {
+            if ($this->commands === []) {
+                $this->resetQueryStats();
+            }
+
+            return;
+        }
+
         try {
             $measurements = $this->measurements(microtime(true) - $command['startedAt'], $command);
             $entry = self::resolveEntry(
@@ -143,7 +153,7 @@ class CommandSensor
 
             self::dispatchEntry(
                 self::sensorConfig('channel'),
-                self::levelForStatus($event->exitCode === 0 ? 'success' : 'failed'),
+                self::levelForStatus($status),
                 self::resolveMessage($event, self::sensorConfig('message', 'console.command')),
                 $entry
             );

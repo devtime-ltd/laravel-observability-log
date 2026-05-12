@@ -174,6 +174,10 @@ class ScheduledTaskSensor
 
     private static function emitWithoutMeasurements(object $event, ScheduledEvent $task, string $status): void
     {
+        if ($status !== 'failed' && self::sensorConfig('failures_only', false)) {
+            return;
+        }
+
         try {
             $entry = self::resolveEntry(
                 $event,
@@ -240,6 +244,14 @@ class ScheduledTaskSensor
 
         $state = $this->tasks[$key];
         unset($this->tasks[$key]);
+
+        if ($status !== 'failed' && self::sensorConfig('failures_only', false)) {
+            if ($this->tasks === []) {
+                $this->resetQueryStats();
+            }
+
+            return;
+        }
 
         try {
             $measurements = $this->measurements(microtime(true) - $state['startedAt'], $state);

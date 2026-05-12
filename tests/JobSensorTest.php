@@ -779,6 +779,57 @@ describe('message callback', function () {
     });
 });
 
+describe('failures_only', function () {
+    it('skips job.queued entries when failures_only is true', function () {
+        config([
+            'observability-log.jobs.channel' => 'test',
+            'observability-log.jobs.failures_only' => true,
+        ]);
+        Log::shouldReceive('channel')->never();
+
+        JobSensor::recordQueued(new JobQueued('redis', 'default', 'id', new stdClass, '{}', null));
+    });
+
+    it('skips processed attempts when failures_only is true', function () {
+        config([
+            'observability-log.jobs.channel' => 'test',
+            'observability-log.jobs.failures_only' => true,
+        ]);
+        Log::shouldReceive('channel')->never();
+
+        $job = fakeJob();
+        JobSensor::recordProcessing(new JobProcessing('redis', $job));
+        JobSensor::recordProcessed(new JobProcessed('redis', $job));
+    });
+
+    it('still emits failed attempts when failures_only is true', function () {
+        config([
+            'observability-log.jobs.channel' => 'test',
+            'observability-log.jobs.failures_only' => true,
+        ]);
+
+        $channel = Mockery::mock();
+        $channel->shouldReceive('log')
+            ->once()
+            ->withArgs(fn ($level, $message, $context) => $level === 'error' && $context['status'] === 'failed');
+        Log::shouldReceive('channel')->with('test')->andReturn($channel);
+
+        $job = fakeJob();
+        JobSensor::recordProcessing(new JobProcessing('redis', $job));
+        JobSensor::recordFailed(new JobFailed('redis', $job, new RuntimeException('boom')));
+    });
+
+    it('inherits the top-level failures_only default', function () {
+        config([
+            'observability-log.jobs.channel' => 'test',
+            'observability-log.failures_only' => true,
+        ]);
+        Log::shouldReceive('channel')->never();
+
+        JobSensor::recordQueued(new JobQueued('redis', 'default', 'id', new stdClass, '{}', null));
+    });
+});
+
 describe('failed_level config', function () {
     it('uses failed_level (default error) for failed attempt entries', function () {
         config(['observability-log.jobs.channel' => 'test']);

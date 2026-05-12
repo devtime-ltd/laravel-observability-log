@@ -2,6 +2,7 @@
 
 namespace DevtimeLtd\LaravelObservabilityLog\Support;
 
+use Illuminate\Http\Client\Request as ClientRequest;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Context;
 use Illuminate\Support\Facades\Log;
@@ -18,6 +19,25 @@ class RequestContext
             return null;
         }
 
+        return self::redactHeaders($request->headers->all());
+    }
+
+    /** @return array<string, string|array<int, string>>|null */
+    public static function clientHeaders(?ClientRequest $request): ?array
+    {
+        if ($request === null) {
+            return null;
+        }
+
+        return self::redactHeaders($request->headers());
+    }
+
+    /**
+     * @param  array<string, mixed>  $headers
+     * @return array<string, string|array<int, string>>
+     */
+    private static function redactHeaders(array $headers): array
+    {
         $redact = collect(config('observability-log.redact_headers', []))
             ->filter(static fn ($value) => is_string($value))
             ->map(static fn (string $value) => strtolower($value))
@@ -28,7 +48,7 @@ class RequestContext
 
         $out = [];
 
-        foreach ($request->headers->all() as $name => $values) {
+        foreach ($headers as $name => $values) {
             $lower = strtolower((string) $name);
 
             if (isset($redact[$lower])) {
@@ -36,6 +56,8 @@ class RequestContext
 
                 continue;
             }
+
+            $values = is_array($values) ? $values : [$values];
 
             if (count($values) === 1) {
                 $out[$lower] = self::truncate((string) $values[0], $valueCap);

@@ -11,6 +11,9 @@ use Illuminate\Console\Events\ScheduledTaskSkipped;
 use Illuminate\Console\Events\ScheduledTaskStarting;
 use Illuminate\Contracts\Debug\ExceptionHandler;
 use Illuminate\Database\Events\QueryExecuted;
+use Illuminate\Http\Client\Events\ConnectionFailed;
+use Illuminate\Http\Client\Events\RequestSending;
+use Illuminate\Http\Client\Events\ResponseReceived;
 use Illuminate\Queue\Events\JobExceptionOccurred;
 use Illuminate\Queue\Events\JobFailed;
 use Illuminate\Queue\Events\JobProcessed;
@@ -32,6 +35,7 @@ class ObservabilityLogServiceProvider extends ServiceProvider
         $this->app->singleton(JobSensor::class);
         $this->app->singleton(CommandSensor::class);
         $this->app->singleton(ScheduledTaskSensor::class);
+        $this->app->singleton(OutgoingHttpSensor::class);
     }
 
     public function boot(): void
@@ -62,6 +66,10 @@ class ObservabilityLogServiceProvider extends ServiceProvider
         Event::listen(ScheduledBackgroundTaskFinished::class, [ScheduledTaskSensor::class, 'recordBackgroundFinished']);
         Event::listen(ScheduledTaskFailed::class, [ScheduledTaskSensor::class, 'recordFailed']);
         Event::listen(ScheduledTaskSkipped::class, [ScheduledTaskSensor::class, 'recordSkipped']);
+
+        Event::listen(RequestSending::class, [OutgoingHttpSensor::class, 'recordSending']);
+        Event::listen(ResponseReceived::class, [OutgoingHttpSensor::class, 'recordReceived']);
+        Event::listen(ConnectionFailed::class, [OutgoingHttpSensor::class, 'recordConnectionFailed']);
 
         $this->registerSharedQueryListener();
     }

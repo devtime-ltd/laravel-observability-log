@@ -107,9 +107,14 @@ class RequestSensor
     {
         try {
             $statusCode = $response?->getStatusCode();
-            $level = self::levelForStatus(
-                $statusCode !== null && $statusCode >= 500 ? 'failed' : 'success'
-            );
+            $is5xx = $statusCode !== null && $statusCode >= 500;
+            $isFailure = $is5xx || $response === null;
+
+            if (! $isFailure && self::sensorConfig('failures_only', false)) {
+                return;
+            }
+
+            $level = self::levelForStatus($is5xx ? 'failed' : 'success');
 
             $measurements = $this->measurements($elapsed);
 
