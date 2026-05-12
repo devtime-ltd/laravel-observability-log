@@ -47,6 +47,23 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Failures-only emission
+    |--------------------------------------------------------------------------
+    |
+    | Only emit entries that represent a failure: 5xx requests, failed
+    | job attempts, non-zero command exits, failed scheduled tasks,
+    | 5xx outgoing HTTP responses, and every ConnectionFailed entry.
+    | Routine "success" entries (and job.queued, scheduled skipped)
+    | are dropped. Useful when overall log volume is high and only
+    | error traffic is interesting. Override per sensor by setting
+    | the same key inside that sensor's section.
+    |
+    */
+
+    'failures_only' => false,
+
+    /*
+    |--------------------------------------------------------------------------
     | Header capture
     |--------------------------------------------------------------------------
     |
@@ -262,6 +279,39 @@ return [
     'schedule' => [
 
         'message' => 'schedule.task',
+
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Outgoing HTTP logging
+    |--------------------------------------------------------------------------
+    |
+    | Emits "http.outgoing" once per outgoing HTTP request dispatched
+    | through Laravel's Http facade (RequestSending / ResponseReceived /
+    | ConnectionFailed events). Captures method, url, host, path,
+    | status, response_size, duration_ms, and exception on
+    | connection failure.
+    |
+    */
+
+    'outgoing_http' => [
+
+        'message' => 'http.outgoing',
+
+        // Include the query string portion of the URL. Off by default
+        // because outgoing query strings often carry API keys, OAuth
+        // params, or signed-URL secrets you may not want logged.
+        // When true, the full URL is emitted and the raw query is
+        // also surfaced as a separate "query_string" field.
+        'capture_query_string' => false,
+
+        // Skip outgoing requests to these hosts entirely. Matches
+        // the host portion case-insensitively. Useful for noisy or
+        // sensitive destinations (e.g. an auth provider).
+        'ignore_hosts' => [
+            // 'login.example.com',
+        ],
 
     ],
 

@@ -385,6 +385,59 @@ describe('message callback', function () {
     });
 });
 
+describe('failures_only', function () {
+    it('skips successful tasks when failures_only is true', function () {
+        config([
+            'observability-log.schedule.channel' => 'test',
+            'observability-log.schedule.failures_only' => true,
+        ]);
+        Log::shouldReceive('channel')->never();
+
+        $task = scheduledEvent();
+        ScheduledTaskSensor::recordStarting(new ScheduledTaskStarting($task));
+        ScheduledTaskSensor::recordFinished(new ScheduledTaskFinished($task, 0.5));
+    });
+
+    it('skips skipped tasks when failures_only is true', function () {
+        config([
+            'observability-log.schedule.channel' => 'test',
+            'observability-log.schedule.failures_only' => true,
+        ]);
+        Log::shouldReceive('channel')->never();
+
+        ScheduledTaskSensor::recordSkipped(new ScheduledTaskSkipped(scheduledEvent()));
+    });
+
+    it('still emits failed tasks when failures_only is true', function () {
+        config([
+            'observability-log.schedule.channel' => 'test',
+            'observability-log.schedule.failures_only' => true,
+        ]);
+
+        $channel = Mockery::mock();
+        $channel->shouldReceive('log')
+            ->once()
+            ->withArgs(fn ($level, $message, $context) => $level === 'error' && $context['status'] === 'failed');
+        Log::shouldReceive('channel')->with('test')->andReturn($channel);
+
+        $task = scheduledEvent();
+        ScheduledTaskSensor::recordStarting(new ScheduledTaskStarting($task));
+        ScheduledTaskSensor::recordFailed(new ScheduledTaskFailed($task, new RuntimeException('boom')));
+    });
+
+    it('inherits the top-level failures_only default', function () {
+        config([
+            'observability-log.schedule.channel' => 'test',
+            'observability-log.failures_only' => true,
+        ]);
+        Log::shouldReceive('channel')->never();
+
+        $task = scheduledEvent();
+        ScheduledTaskSensor::recordStarting(new ScheduledTaskStarting($task));
+        ScheduledTaskSensor::recordFinished(new ScheduledTaskFinished($task, 0.5));
+    });
+});
+
 describe('failed_level config', function () {
     it('uses failed_level (default error) for failed task entries', function () {
         config(['observability-log.schedule.channel' => 'test']);

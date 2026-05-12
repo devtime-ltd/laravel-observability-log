@@ -2,7 +2,7 @@
 
 A set of sensors that emit structured events through Laravel log channels. Whatever log driver you use (stack, Axiom, Better Stack, Papertrail, stderr) doubles as your observability pipeline.
 
-Ships five sensors today (`RequestSensor`, `ExceptionSensor`, `JobSensor`, `CommandSensor`, `ScheduledTaskSensor`), with more on the [roadmap](#roadmap).
+Ships six sensors today (`RequestSensor`, `ExceptionSensor`, `JobSensor`, `CommandSensor`, `ScheduledTaskSensor`, `OutgoingHttpSensor`), with more on the [roadmap](#roadmap).
 
 ## Design philosophy
 
@@ -65,6 +65,7 @@ return [
     'channel' => env('OBSERVABILITY_LOG_CHANNEL'),
     'level' => 'info',
     'failed_level' => 'error',
+    'failures_only' => false,
     'capture_headers' => env('OBSERVABILITY_LOG_CAPTURE_HEADERS', false),
     'db_collect_queries' => true,
     'db_slow_query_threshold' => 100,
@@ -73,7 +74,7 @@ return [
 ];
 ```
 
-`level` is the default for every entry. `failed_level` is used instead when a sensor emits an entry with `status: failed` (a failed job attempt, a non-zero command exit, a failed scheduled task), on `RequestSensor` for 5xx responses, and on every `ExceptionSensor` entry (every unhandled exception is considered a failure). `capture_headers` only applies to sensors that read it (request and exception). The `db_*` keys only apply to sensors that track DB stats (request, job, command, scheduled task).
+`level` is the default for every entry. `failed_level` is used instead when a sensor emits an entry with `status: failed` (a failed job attempt, a non-zero command exit, a failed scheduled task), on `RequestSensor` for 5xx responses, on `OutgoingHttpSensor` for 5xx responses and connection failures, and on every `ExceptionSensor` entry (every unhandled exception is considered a failure). `failures_only` drops routine "success" entries across every sensor that has a failure bucket; useful when log volume is high and only error traffic is interesting. `capture_headers` applies to the request, exception, and outgoing HTTP sensors. The `db_*` keys only apply to sensors that track DB stats (request, job, command, scheduled task).
 
 ## Request sensor
 
@@ -117,7 +118,7 @@ return [
 ],
 ```
 
-Inherits the shared `channel`, `level`, `capture_headers`, and `db_*` defaults; override any of them by setting the same key inside this section.
+Inherits the shared `channel`, `level`, `failed_level`, `failures_only`, `capture_headers`, and `db_*` defaults; override any of them by setting the same key inside this section.
 
 ### IP obfuscation
 
@@ -320,7 +321,7 @@ Registration is automatic through the service provider; no `bootstrap/app.php` c
 ],
 ```
 
-Inherits the shared `channel`, `level`, and `db_*` defaults. The `db_*` keys behave the same as on the request sensor, scoped per attempt.
+Inherits the shared `channel`, `level`, `failed_level`, `failures_only`, and `db_*` defaults. The `db_*` keys behave the same as on the request sensor, scoped per attempt. When `failures_only` is on, `job.queued` and `job.attempt` entries with `status: processed` are dropped; only failed attempts emit.
 
 ### Failed attempts
 
@@ -394,7 +395,7 @@ JobSensor::message(fn ($event) => $event instanceof JobQueued ? 'queue.dispatche
 ],
 ```
 
-Inherits the shared `channel`, `level`, and `db_*` defaults.
+Inherits the shared `channel`, `level`, `failed_level`, `failures_only`, and `db_*` defaults. When `failures_only` is on, only commands with a non-zero exit code emit.
 
 ### Common ignore list candidates
 
@@ -459,7 +460,7 @@ If the background task is itself an Artisan command, [`CommandSensor`](#command-
 ],
 ```
 
-Inherits the shared `channel`, `level`, and `db_*` defaults.
+Inherits the shared `channel`, `level`, `failed_level`, `failures_only`, and `db_*` defaults. When `failures_only` is on, only `status: failed` entries emit; `success` and `skipped` are dropped.
 
 ### Customising the entry
 
@@ -474,6 +475,108 @@ ScheduledTaskSensor::extend(function ($event, array $entry) {
 
 // Different message for skipped vs ran
 ScheduledTaskSensor::message(fn ($event) => $event instanceof ScheduledTaskSkipped ? 'schedule.skipped' : 'schedule.ran');
+```
+
+## Outgoing HTTP sensor
+
+`OutgoingHttpSensor` listens to the `Http` facade's `RequestSending`, `ResponseReceived`, and `ConnectionFailed` events and emits one `http.outgoing` entry per outgoing request (success or failure). Registration is automatic through the service provider; no `bootstrap/app.php` change required.
+
+### Logged fields
+
+| Field           | Description                                                                  |
+| --------------- | ---------------------------------------------------------------------------- |
+| `method`        | HTTP method                                                                  |
+| `url`           | Request URL (query string stripped by default, see [Query string](#query-string)) |
+| `host`          | Host portion of the URL                                                      |
+| `path`          | Path portion of the URL                                                      |
+| `query_string`  | Raw query string when `capture_query_string` is on, omitted otherwise        |
+| `status`        | Response status code (omitted on connection failure)                         |
+| `response_size` | Response body size in bytes (omitted on connection failure)                  |
+| `duration_ms`   | Total request time in milliseconds                                           |
+| `exception`     | `{class, message, file, line, code}` when the connection failed              |
+| `headers`       | Full header map when `capture_headers` is enabled (redaction applies)        |
+| `trace_id`      | Correlation id when resolvable                                               |
+
+### Options
+
+```php
+'outgoing_http' => [
+    'message' => 'http.outgoing',
+    'capture_query_string' => false,
+    'ignore_hosts' => [
+        // 'login.example.com',
+    ],
+],
+```
+
+Inherits the shared `channel`, `level`, `failed_level`, `failures_only`, and `capture_headers` defaults. `failed_level` is used for 5xx responses and every `ConnectionFailed` entry; other status codes (1xx/2xx/3xx/4xx) use `level`. When `failures_only` is on, only 5xx responses and `ConnectionFailed` entries emit.
+
+### Query string
+
+By default `url` is emitted without its query string and the `query_string` field is omitted entirely. Outgoing query strings frequently embed API keys, OAuth params, or signed-URL secrets you may not want in your log pipeline, so stripping is the safer default. Flip `capture_query_string` to `true` to emit the full URL and surface the raw query as a separate field:
+
+```php
+'outgoing_http' => [
+    'capture_query_string' => true,
+],
+```
+
+### Ignore hosts
+
+Skip outgoing requests to specific hosts entirely:
+
+```php
+'outgoing_http' => [
+    'ignore_hosts' => ['login.example.com', 'metrics.example.com'],
+],
+```
+
+Matching is case-insensitive and exact (no wildcards).
+
+### Reducing volume
+
+Outgoing HTTP can be very high volume. Two knobs:
+
+```php
+'outgoing_http' => [
+    'channel' => null,        // disable the sensor entirely
+    'failures_only' => true,  // only emit 5xx and ConnectionFailed entries
+],
+```
+
+Both inherit their top-level defaults, so `OBSERVABILITY_LOG_CHANNEL=null` or top-level `failures_only => true` apply globally; the sensor-level keys override.
+
+### Customising the entry
+
+```php
+use DevtimeLtd\LaravelObservabilityLog\OutgoingHttpSensor;
+use Illuminate\Http\Client\Events\ConnectionFailed;
+
+// Add fields on top of the default entry
+OutgoingHttpSensor::extend(function ($event, array $entry) {
+    $entry['env'] = app()->environment();
+    return $entry;
+});
+
+// Replace the default entry. $measurements contains duration_ms
+// (omitted on a ConnectionFailed that never saw a RequestSending).
+OutgoingHttpSensor::using(function ($event, array $measurements) {
+    if ($event instanceof ConnectionFailed) {
+        return [
+            'host' => parse_url($event->request->url(), PHP_URL_HOST),
+            'error' => $event->exception->getMessage(),
+        ];
+    }
+
+    return [
+        'host' => parse_url($event->request->url(), PHP_URL_HOST),
+        'status' => $event->response->status(),
+        'duration_ms' => $measurements['duration_ms'],
+    ];
+});
+
+// Customise the log message
+OutgoingHttpSensor::message(fn ($event) => $event instanceof ConnectionFailed ? 'http.outgoing.failed' : 'http.outgoing');
 ```
 
 ## Header capture
@@ -596,8 +699,8 @@ Each row shows the event name emitted on the configured log channel.
 - [x] `JobSensor` (`job.attempt`, `job.queued`), queued job attempts and enqueues
 - [x] `CommandSensor` (`console.command`), Artisan command completions
 - [x] `ScheduledTaskSensor` (`schedule.task`), scheduled task completions
+- [x] `OutgoingHttpSensor` (`http.outgoing`), outgoing HTTP via the `Http` facade
 - [ ] `CacheSensor` (`cache.hit`, `cache.miss`, `cache.write`, `cache.delete`), cache operations
-- [ ] `OutgoingHttpSensor` (`http.outgoing`), outgoing HTTP via the `Http` facade plus optional Guzzle middleware
 - [ ] `MailSensor` (`mail.sent`), mail delivery
 - [ ] `NotificationSensor` (`notification.sent`), notification delivery
 

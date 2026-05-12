@@ -888,6 +888,83 @@ describe('failed_level for 5xx responses', function () {
     });
 });
 
+describe('failures_only', function () {
+    beforeEach(function () {
+        RequestSensor::using(null);
+        RequestSensor::extend(null);
+        RequestSensor::message(null);
+    });
+
+    it('skips emission for 2xx responses when failures_only is true', function () {
+        config([
+            'observability-log.requests.channel' => 'test-channel',
+            'observability-log.requests.failures_only' => true,
+        ]);
+        Log::shouldReceive('channel')->never();
+
+        $middleware = new RequestSensor;
+        $middleware->handle(Request::create('/ok'), fn () => new Response('OK', 200));
+    });
+
+    it('skips 4xx responses when failures_only is true', function () {
+        config([
+            'observability-log.requests.channel' => 'test-channel',
+            'observability-log.requests.failures_only' => true,
+        ]);
+        Log::shouldReceive('channel')->never();
+
+        $middleware = new RequestSensor;
+        $middleware->handle(Request::create('/missing'), fn () => new Response('Not Found', 404));
+    });
+
+    it('still emits 5xx responses when failures_only is true', function () {
+        config([
+            'observability-log.requests.channel' => 'test-channel',
+            'observability-log.requests.failures_only' => true,
+        ]);
+
+        $channel = Mockery::mock();
+        $channel->shouldReceive('log')
+            ->once()
+            ->withArgs(fn ($level, $message, $context) => $level === 'error' && $context['status'] === 503);
+        Log::shouldReceive('channel')->with('test-channel')->andReturn($channel);
+
+        $middleware = new RequestSensor;
+        $middleware->handle(Request::create('/oops'), fn () => new Response('boom', 503));
+    });
+
+    it('still emits when downstream throws (treated as failure) under failures_only', function () {
+        config([
+            'observability-log.requests.channel' => 'test-channel',
+            'observability-log.requests.failures_only' => true,
+        ]);
+
+        $channel = Mockery::mock();
+        $channel->shouldReceive('log')
+            ->once()
+            ->withArgs(fn ($level, $message, $context) => $context['status'] === null);
+        Log::shouldReceive('channel')->with('test-channel')->andReturn($channel);
+
+        $middleware = new RequestSensor;
+
+        try {
+            $middleware->handle(Request::create('/boom'), fn () => throw new RuntimeException('boom'));
+        } catch (RuntimeException) {
+        }
+    });
+
+    it('inherits the top-level failures_only default', function () {
+        config([
+            'observability-log.requests.channel' => 'test-channel',
+            'observability-log.failures_only' => true,
+        ]);
+        Log::shouldReceive('channel')->never();
+
+        $middleware = new RequestSensor;
+        $middleware->handle(Request::create('/ok'), fn () => new Response('OK', 200));
+    });
+});
+
 describe('config options', function () {
     beforeEach(function () {
         RequestSensor::using(null);

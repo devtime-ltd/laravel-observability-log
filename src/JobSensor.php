@@ -80,6 +80,10 @@ class JobSensor
             return;
         }
 
+        if (self::sensorConfig('failures_only', false)) {
+            return;
+        }
+
         try {
             $entry = self::resolveEntry(
                 $event,
@@ -181,6 +185,14 @@ class JobSensor
 
         $attempt = $this->attempts[$key];
         unset($this->attempts[$key]);
+
+        if ($status !== 'failed' && self::sensorConfig('failures_only', false)) {
+            if ($this->attempts === []) {
+                $this->resetQueryStats();
+            }
+
+            return;
+        }
 
         try {
             $measurements = $this->measurements(microtime(true) - $attempt['startedAt'], $attempt);
