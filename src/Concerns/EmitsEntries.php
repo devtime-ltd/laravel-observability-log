@@ -5,6 +5,7 @@ namespace DevtimeLtd\LaravelObservabilityLog\Concerns;
 use Closure;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
+use ReflectionFunction;
 use Throwable;
 
 trait EmitsEntries
@@ -48,12 +49,15 @@ trait EmitsEntries
 
     /**
      * Resolve the client IP via the configured `resolve_ip` callable
-     * (falling back to `$request->ip()` when it throws or returns a
-     * non-string), then apply `obfuscate_ip` to the resolved value if
-     * configured (its `null` return is accepted as the final value).
-     * Both keys are read via sensorConfig, so a sensor-level value
-     * overrides the top-level default. Returns null when there is no
-     * bound request.
+     * (falling back to `$request->ip()` when it returns null, an empty
+     * string, a non-string, or throws), then apply `obfuscate_ip` to
+     * the resolved value if configured. `obfuscate_ip` is fail-closed:
+     * a null/non-string return or a throw collapses the logged IP to
+     * null rather than the unmasked value, on the principle that a
+     * misconfigured obfuscator should not silently leak the IP it was
+     * meant to hide. Both keys are read via sensorConfig, so a sensor-
+     * level value overrides the top-level default. Returns null when
+     * there is no bound request.
      */
     protected static function clientIp(?Request $request): ?string
     {
@@ -65,7 +69,7 @@ trait EmitsEntries
 
         $resolver = self::sensorConfig('resolve_ip');
         if (is_callable($resolver)) {
-            $resolved = self::callConfigCallable($resolver, 'resolve_ip', $request);
+            $resolved = self::invokeConfigCallable($resolver, 'resolve_ip', [$request]);
             if (is_string($resolved) && $resolved !== '') {
                 $ip = $resolved;
             }
@@ -73,7 +77,7 @@ trait EmitsEntries
 
         $obfuscate = self::sensorConfig('obfuscate_ip');
         if (is_callable($obfuscate)) {
-            $masked = self::callConfigCallable($obfuscate, 'obfuscate_ip', $ip, $request);
+            $masked = self::invokeConfigCallable($obfuscate, 'obfuscate_ip', [$ip, $request]);
             if (is_string($masked) || $masked === null) {
                 $ip = $masked;
             }
@@ -82,11 +86,28 @@ trait EmitsEntries
         return is_string($ip) ? $ip : null;
     }
 
-    /** Invoke a callable read from config; log and return null on throw. */
-    protected static function callConfigCallable(callable $callable, string $configKey, mixed ...$args): mixed
+    /**
+     * Invoke a callable read from config, trimming args to its
+     * declared arity (PHP user functions silently drop extra
+     * positional args, but internal functions like strtolower raise
+     * ArgumentCountError). Variadic callables get the full list.
+     * Logs and returns null on throw.
+     *
+     * @param  list<mixed>  $args
+     */
+    protected static function invokeConfigCallable(callable $callable, string $configKey, array $args): mixed
     {
         try {
-            return $callable(...$args);
+            $ref = new ReflectionFunction(Closure::fromCallable($callable));
+            $trimmed = $ref->isVariadic() || $ref->getNumberOfParameters() >= count($args)
+                ? $args
+                : array_slice($args, 0, $ref->getNumberOfParameters());
+        } catch (Throwable) {
+            $trimmed = $args;
+        }
+
+        try {
+            return $callable(...$trimmed);
         } catch (Throwable $e) {
             try {
                 Log::error(sprintf(
