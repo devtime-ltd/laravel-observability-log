@@ -159,7 +159,7 @@ use DevtimeLtd\LaravelObservabilityLog\ObfuscateIp;
 'obfuscate_ip' => [ObfuscateIp::class, 'levelTwo'],
 ```
 
-Signature: `fn (?string $ip, ?Illuminate\Http\Request $request = null): ?string`. The request is passed for route-aware masking; one-arg callables (including internal functions like `strtolower`) still work, because the package reflects on the callable's declared arity and trims the args list to match. Pass any callable for custom masking, e.g. `fn (?string $ip) => 'redacted'`, or use the static-method forms listed in the [config:cache callout](#shared-defaults) to stay cache-safe.
+Signature: `fn (?string $ip, ?Illuminate\Http\Request $request = null): ?string`. The request is passed for route-aware masking; user-defined closures, static methods, and class methods that only declare the `$ip` parameter silently drop the unused second arg, so a one-arg callable like `fn (?string $ip) => 'redacted'` still works. PHP internal functions (e.g. `strtolower`, `md5`) have strict signatures and reject the extra arg with a `TypeError` / `ArgumentCountError`; wrap them in a closure (`fn (?string $ip) => md5($ip)`) rather than passing the bare function string. Use the static-method forms listed in the [config:cache callout](#shared-defaults) to stay cache-safe.
 
 `obfuscate_ip` is fail-closed: a `null`/non-string return or a throw collapses the logged `ip` field to `null` rather than the unmasked value. The reasoning is that a misconfigured obfuscator should not silently leak the IP it was meant to hide. If you want the raw IP, leave `obfuscate_ip` unset.
 
