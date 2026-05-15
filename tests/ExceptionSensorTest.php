@@ -1,6 +1,8 @@
 <?php
 
 use DevtimeLtd\LaravelObservabilityLog\ExceptionSensor;
+use DevtimeLtd\LaravelObservabilityLog\ObfuscateIp;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Context;
 use Illuminate\Support\Facades\Log;
 
@@ -723,6 +725,69 @@ describe('HTTP vs console context', function () {
                     && ! array_key_exists('url', $context)
                     && ! array_key_exists('headers', $context);
             });
+
+        Log::shouldReceive('channel')->with('test-channel')->andReturn($channel);
+
+        ExceptionSensor::report(new RuntimeException('boom'));
+    });
+});
+
+describe('IP resolution and obfuscation', function () {
+    it('applies obfuscate_ip to the captured IP', function () {
+        config([
+            'observability-log.exceptions.channel' => 'test-channel',
+            'observability-log.obfuscate_ip' => [ObfuscateIp::class, 'levelTwo'],
+        ]);
+
+        app(\Illuminate\Contracts\Http\Kernel::class);
+        app()->instance('request', Request::create('/test'));
+
+        $channel = Mockery::mock();
+        $channel->shouldReceive('log')
+            ->once()
+            ->withArgs(fn (string $level, string $message, array $context) => $context['ip'] === '127.0.0.0');
+
+        Log::shouldReceive('channel')->with('test-channel')->andReturn($channel);
+
+        ExceptionSensor::report(new RuntimeException('boom'));
+    });
+
+    it('honours a sensor-level obfuscate_ip override', function () {
+        config([
+            'observability-log.exceptions.channel' => 'test-channel',
+            'observability-log.obfuscate_ip' => [ObfuscateIp::class, 'levelFour'],
+            'observability-log.exceptions.obfuscate_ip' => [ObfuscateIp::class, 'levelOne'],
+        ]);
+
+        app(\Illuminate\Contracts\Http\Kernel::class);
+        app()->instance('request', Request::create('/test'));
+
+        $channel = Mockery::mock();
+        $channel->shouldReceive('log')
+            ->once()
+            ->withArgs(fn (string $level, string $message, array $context) => $context['ip'] === '127.0.0.0');
+
+        Log::shouldReceive('channel')->with('test-channel')->andReturn($channel);
+
+        ExceptionSensor::report(new RuntimeException('boom'));
+    });
+
+    it('resolves the IP via resolve_ip before obfuscation', function () {
+        config([
+            'observability-log.exceptions.channel' => 'test-channel',
+            'observability-log.resolve_ip' => fn (Request $request) => $request->header('X-Forwarded-Client-Ip'),
+            'observability-log.obfuscate_ip' => [ObfuscateIp::class, 'levelTwo'],
+        ]);
+
+        app(\Illuminate\Contracts\Http\Kernel::class);
+        app()->instance('request', Request::create('/test', 'GET', [], [], [], [
+            'HTTP_X_FORWARDED_CLIENT_IP' => '203.0.113.7',
+        ]));
+
+        $channel = Mockery::mock();
+        $channel->shouldReceive('log')
+            ->once()
+            ->withArgs(fn (string $level, string $message, array $context) => $context['ip'] === '203.0.0.0');
 
         Log::shouldReceive('channel')->with('test-channel')->andReturn($channel);
 
