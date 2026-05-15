@@ -5,7 +5,6 @@ namespace DevtimeLtd\LaravelObservabilityLog\Concerns;
 use Closure;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
-use ReflectionFunction;
 use Throwable;
 
 trait EmitsEntries
@@ -85,27 +84,21 @@ trait EmitsEntries
     }
 
     /**
-     * Invoke a callable read from config, trimming args to its
-     * declared arity (PHP user functions silently drop extra
-     * positional args, but internal functions like strtolower raise
-     * ArgumentCountError). Variadic callables get the full list.
-     * Logs and returns null on throw.
+     * Invoke a callable read from config. The package always passes
+     * the documented argument list; user-defined functions, closures,
+     * and class methods silently drop any positional args they do not
+     * declare, so the documented signature works for every realistic
+     * callable form. PHP internal functions with strict signatures
+     * (e.g. `strtolower`, `md5`) reject extra args at call time; wrap
+     * those in a closure (`fn (?string $ip) => md5($ip)`) rather than
+     * passing the bare function string. Logs and returns null on throw.
      *
      * @param  list<mixed>  $args
      */
     protected static function invokeConfigCallable(callable $callable, string $configKey, array $args): mixed
     {
         try {
-            $ref = new ReflectionFunction(Closure::fromCallable($callable));
-            $trimmed = $ref->isVariadic() || $ref->getNumberOfParameters() >= count($args)
-                ? $args
-                : array_slice($args, 0, $ref->getNumberOfParameters());
-        } catch (Throwable) {
-            $trimmed = $args;
-        }
-
-        try {
-            return $callable(...$trimmed);
+            return $callable(...$args);
         } catch (Throwable $e) {
             try {
                 Log::error(sprintf(
