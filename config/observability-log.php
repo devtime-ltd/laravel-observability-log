@@ -167,7 +167,7 @@ return [
     | IP obfuscation
     |--------------------------------------------------------------------------
     |
-    | Callable `fn (?string $ip, ?Illuminate\Http\Request $request): ?string`
+    | Callable `fn (?string $ip, ?Illuminate\Http\Request $request = null): ?string`
     | applied to the resolved IP before it is logged. The request is
     | passed as an optional second arg for route-aware masking; callables
     | that declare a single `?string` parameter still work. Use the named
