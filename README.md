@@ -140,7 +140,7 @@ Override Laravel's `$request->ip()` when the client IP arrives via a custom head
 'resolve_ip' => [App\Support\ResolveClientIp::class, 'resolve'],
 ```
 
-Signature: `fn (Illuminate\Http\Request $request): ?string`. Returns null, an empty string, a non-string, or throws then the package falls back to `$request->ip()` (and logs the throw via `Log::error`). The package only invokes the callable with the documented argument list; callables that declare more parameters than the signature will raise `ArgumentCountError` and fall back the same way.
+Signature: `fn (Illuminate\Http\Request $request): ?string`. If it returns `null`, an empty string, a non-string value, or throws, the package falls back to `$request->ip()` (and logs the throw via `Log::error`). The package only invokes the callable with the documented argument list; callables that declare more parameters than the signature will raise `ArgumentCountError` and fall back the same way.
 
 #### `obfuscate_ip`
 
