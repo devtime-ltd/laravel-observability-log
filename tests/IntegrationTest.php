@@ -168,7 +168,7 @@ class IntegrationTest extends TestCase
 
     public function test_obfuscates_ip(): void
     {
-        config(['observability-log.requests.obfuscate_ip' => ObfuscateIp::level(1)]);
+        config(['observability-log.requests.obfuscate_ip' => [ObfuscateIp::class, 'levelOne']]);
 
         $this->get('/hello')->assertOk();
 

@@ -972,10 +972,10 @@ describe('config options', function () {
         RequestSensor::message(null);
     });
 
-    it('masks IP when obfuscate_ip is a callable', function () {
+    it('masks IP when obfuscate_ip is an array callable', function () {
         config([
             'observability-log.requests.channel' => 'test-channel',
-            'observability-log.requests.obfuscate_ip' => ObfuscateIp::level(1),
+            'observability-log.requests.obfuscate_ip' => [ObfuscateIp::class, 'levelOne'],
         ]);
 
         $channel = Mockery::mock();
@@ -988,6 +988,64 @@ describe('config options', function () {
         $middleware = new RequestSensor;
         $request = Request::create('/test');
         $middleware->handle($request, fn () => new Response('OK', 200));
+    });
+
+    it('inherits obfuscate_ip from the top-level config', function () {
+        config([
+            'observability-log.requests.channel' => 'test-channel',
+            'observability-log.obfuscate_ip' => [ObfuscateIp::class, 'levelTwo'],
+        ]);
+
+        $channel = Mockery::mock();
+        $channel->shouldReceive('log')
+            ->once()
+            ->withArgs(fn (string $level, string $message, array $context) => $context['ip'] === '127.0.0.0');
+
+        Log::shouldReceive('channel')->with('test-channel')->andReturn($channel);
+
+        (new RequestSensor)->handle(Request::create('/test'), fn () => new Response('OK', 200));
+    });
+
+    it('lets the sensor-level obfuscate_ip override the top-level one', function () {
+        config([
+            'observability-log.requests.channel' => 'test-channel',
+            'observability-log.obfuscate_ip' => [ObfuscateIp::class, 'levelFour'],
+            'observability-log.requests.obfuscate_ip' => [ObfuscateIp::class, 'levelOne'],
+        ]);
+
+        $channel = Mockery::mock();
+        $channel->shouldReceive('log')
+            ->once()
+            ->withArgs(fn (string $level, string $message, array $context) => $context['ip'] === '127.0.0.0');
+
+        Log::shouldReceive('channel')->with('test-channel')->andReturn($channel);
+
+        (new RequestSensor)->handle(Request::create('/test'), fn () => new Response('OK', 200));
+    });
+
+    it('passes the request as a second arg to obfuscate_ip for route-aware masking', function () {
+        config([
+            'observability-log.requests.channel' => 'test-channel',
+            'observability-log.requests.obfuscate_ip' => fn (?string $ip, ?Request $request) => $request?->is('admin/*')
+                ? $ip
+                : ObfuscateIp::levelTwo($ip),
+        ]);
+
+        $captured = [];
+        $channel = Mockery::mock();
+        $channel->shouldReceive('log')
+            ->twice()
+            ->andReturnUsing(function ($level, $message, array $context) use (&$captured) {
+                $captured[] = ['path' => $context['path'], 'ip' => $context['ip']];
+            });
+
+        Log::shouldReceive('channel')->with('test-channel')->andReturn($channel);
+
+        (new RequestSensor)->handle(Request::create('/admin/users'), fn () => new Response('OK', 200));
+        (new RequestSensor)->handle(Request::create('/public'), fn () => new Response('OK', 200));
+
+        expect($captured[0])->toMatchArray(['path' => 'admin/users', 'ip' => '127.0.0.1']);
+        expect($captured[1])->toMatchArray(['path' => 'public', 'ip' => '127.0.0.0']);
     });
 
     it('supports custom IP masking callables', function () {
@@ -1006,6 +1064,102 @@ describe('config options', function () {
         $middleware = new RequestSensor;
         $request = Request::create('/test');
         $middleware->handle($request, fn () => new Response('OK', 200));
+    });
+
+    it('resolves the IP via the resolve_ip callable', function () {
+        config([
+            'observability-log.requests.channel' => 'test-channel',
+            'observability-log.requests.resolve_ip' => fn (Request $request) => $request->header('X-Forwarded-Client-Ip'),
+        ]);
+
+        $channel = Mockery::mock();
+        $channel->shouldReceive('log')
+            ->once()
+            ->withArgs(fn (string $level, string $message, array $context) => $context['ip'] === '203.0.113.7');
+
+        Log::shouldReceive('channel')->with('test-channel')->andReturn($channel);
+
+        $request = Request::create('/test', 'GET', [], [], [], [
+            'HTTP_X_FORWARDED_CLIENT_IP' => '203.0.113.7',
+        ]);
+
+        (new RequestSensor)->handle($request, fn () => new Response('OK', 200));
+    });
+
+    it('inherits resolve_ip from the top-level config', function () {
+        config([
+            'observability-log.requests.channel' => 'test-channel',
+            'observability-log.resolve_ip' => fn (Request $request) => $request->header('X-Forwarded-Client-Ip'),
+        ]);
+
+        $channel = Mockery::mock();
+        $channel->shouldReceive('log')
+            ->once()
+            ->withArgs(fn (string $level, string $message, array $context) => $context['ip'] === '203.0.113.7');
+
+        Log::shouldReceive('channel')->with('test-channel')->andReturn($channel);
+
+        $request = Request::create('/test', 'GET', [], [], [], [
+            'HTTP_X_FORWARDED_CLIENT_IP' => '203.0.113.7',
+        ]);
+
+        (new RequestSensor)->handle($request, fn () => new Response('OK', 200));
+    });
+
+    it('applies obfuscate_ip after resolve_ip', function () {
+        config([
+            'observability-log.requests.channel' => 'test-channel',
+            'observability-log.resolve_ip' => fn (Request $request) => $request->header('X-Forwarded-Client-Ip'),
+            'observability-log.obfuscate_ip' => [ObfuscateIp::class, 'levelTwo'],
+        ]);
+
+        $channel = Mockery::mock();
+        $channel->shouldReceive('log')
+            ->once()
+            ->withArgs(fn (string $level, string $message, array $context) => $context['ip'] === '203.0.0.0');
+
+        Log::shouldReceive('channel')->with('test-channel')->andReturn($channel);
+
+        $request = Request::create('/test', 'GET', [], [], [], [
+            'HTTP_X_FORWARDED_CLIENT_IP' => '203.0.113.7',
+        ]);
+
+        (new RequestSensor)->handle($request, fn () => new Response('OK', 200));
+    });
+
+    it('falls back to $request->ip() when resolve_ip throws', function () {
+        config([
+            'observability-log.requests.channel' => 'test-channel',
+            'observability-log.requests.resolve_ip' => function () {
+                throw new RuntimeException('resolver broke');
+            },
+        ]);
+
+        $channel = Mockery::mock();
+        $channel->shouldReceive('log')
+            ->once()
+            ->withArgs(fn (string $level, string $message, array $context) => $context['ip'] === '127.0.0.1');
+
+        Log::shouldReceive('channel')->with('test-channel')->andReturn($channel);
+        Log::shouldReceive('error')->once()->with(Mockery::pattern('/resolve_ip callable threw.*resolver broke/'));
+
+        (new RequestSensor)->handle(Request::create('/test'), fn () => new Response('OK', 200));
+    });
+
+    it('falls back to $request->ip() when resolve_ip returns a non-string', function () {
+        config([
+            'observability-log.requests.channel' => 'test-channel',
+            'observability-log.requests.resolve_ip' => fn () => null,
+        ]);
+
+        $channel = Mockery::mock();
+        $channel->shouldReceive('log')
+            ->once()
+            ->withArgs(fn (string $level, string $message, array $context) => $context['ip'] === '127.0.0.1');
+
+        Log::shouldReceive('channel')->with('test-channel')->andReturn($channel);
+
+        (new RequestSensor)->handle(Request::create('/test'), fn () => new Response('OK', 200));
     });
 
     it('uses message from config', function () {

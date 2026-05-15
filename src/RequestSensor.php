@@ -165,12 +165,7 @@ class RequestSensor
      */
     private function buildEntry(Request $request, ?Response $response, array $measurements): array
     {
-        $ip = $request->ip();
-        $maskIp = self::sensorConfig('obfuscate_ip');
-
-        if (is_callable($maskIp)) {
-            $ip = call_user_func($maskIp, $ip);
-        }
+        $ip = self::clientIp($request);
 
         try {
             if ($response instanceof BinaryFileResponse) {

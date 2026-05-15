@@ -3,6 +3,7 @@
 namespace DevtimeLtd\LaravelObservabilityLog\Concerns;
 
 use Closure;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
 use Throwable;
 
@@ -43,6 +44,62 @@ trait EmitsEntries
         }
 
         return config('observability-log.'.$key, $default);
+    }
+
+    /**
+     * Resolve the client IP via the configured `resolve_ip` callable
+     * (falling back to `$request->ip()` when it throws or returns a
+     * non-string), then apply `obfuscate_ip` to the resolved value if
+     * configured (its `null` return is accepted as the final value).
+     * Both keys are read via sensorConfig, so a sensor-level value
+     * overrides the top-level default. Returns null when there is no
+     * bound request.
+     */
+    protected static function clientIp(?Request $request): ?string
+    {
+        if ($request === null) {
+            return null;
+        }
+
+        $ip = $request->ip();
+
+        $resolver = self::sensorConfig('resolve_ip');
+        if (is_callable($resolver)) {
+            $resolved = self::callConfigCallable($resolver, 'resolve_ip', $request);
+            if (is_string($resolved) && $resolved !== '') {
+                $ip = $resolved;
+            }
+        }
+
+        $obfuscate = self::sensorConfig('obfuscate_ip');
+        if (is_callable($obfuscate)) {
+            $masked = self::callConfigCallable($obfuscate, 'obfuscate_ip', $ip, $request);
+            if (is_string($masked) || $masked === null) {
+                $ip = $masked;
+            }
+        }
+
+        return is_string($ip) ? $ip : null;
+    }
+
+    /** Invoke a callable read from config; log and return null on throw. */
+    protected static function callConfigCallable(callable $callable, string $configKey, mixed ...$args): mixed
+    {
+        try {
+            return $callable(...$args);
+        } catch (Throwable $e) {
+            try {
+                Log::error(sprintf(
+                    '[%s] %s callable threw: %s',
+                    class_basename(static::class),
+                    $configKey,
+                    $e->getMessage()
+                ));
+            } catch (Throwable) {
+            }
+
+            return null;
+        }
     }
 
     /**

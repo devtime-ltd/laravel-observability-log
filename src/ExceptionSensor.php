@@ -168,7 +168,7 @@ class ExceptionSensor
             $entry['url'] = $request->fullUrl();
             $entry['route'] = $request->route()?->getName();
             $entry['user_id'] = $request->user()?->getAuthIdentifier();
-            $entry['ip'] = $request->ip();
+            $entry['ip'] = self::clientIp($request);
 
             if (self::sensorConfig('capture_headers')) {
                 $headers = RequestContext::headers($request);

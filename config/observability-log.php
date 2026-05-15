@@ -120,6 +120,12 @@ return [
     | Illuminate\Support\Facades\Context::get('trace_id') when neither
     | resolves. Emitted as the top-level "trace_id" field.
     |
+    | A closure here will break `php artisan config:cache` (var_export
+    | cannot serialise closures). Use a static-method callable instead,
+    | e.g. [App\Support\ResolveTraceId::class, 'resolve'] or
+    | 'App\Support\ResolveTraceId::resolve'. Header-list arrays are
+    | always cache-safe.
+    |
     */
 
     'trace_id' => [
@@ -138,6 +144,46 @@ return [
     */
 
     'trace_id_max_length' => 128,
+
+    /*
+    |--------------------------------------------------------------------------
+    | Client IP resolution
+    |--------------------------------------------------------------------------
+    |
+    | Callable `fn (Illuminate\Http\Request $request): ?string` invoked to
+    | resolve the client IP. Useful when the IP is carried in a custom
+    | header chain that Laravel's trusted proxy handling does not cover.
+    | Falls back to $request->ip() when null, when the callable returns
+    | non-string, or when it throws. Override per sensor by setting
+    | "resolve_ip" inside that sensor's section. Applies to the request
+    | and exception sensors.
+    |
+    */
+
+    'resolve_ip' => null,
+
+    /*
+    |--------------------------------------------------------------------------
+    | IP obfuscation
+    |--------------------------------------------------------------------------
+    |
+    | Callable `fn (?string $ip, ?Illuminate\Http\Request $request): ?string`
+    | applied to the resolved IP before it is logged. The request is
+    | passed as an optional second arg for route-aware masking; callables
+    | that declare a single `?string` parameter still work. Use the named
+    | static methods on ObfuscateIp (levelOne..levelFour) so the config
+    | remains var_export-safe under `php artisan config:cache`; a closure
+    | here will break config caching. Set to null/false to log IPs
+    | verbatim. Override per sensor by setting "obfuscate_ip" inside
+    | that sensor's section. Applies to the request and exception sensors.
+    |
+    | Example:
+    |   use DevtimeLtd\LaravelObservabilityLog\ObfuscateIp;
+    |   'obfuscate_ip' => [ObfuscateIp::class, 'levelTwo'],
+    |
+    */
+
+    'obfuscate_ip' => null,
 
     /*
     |--------------------------------------------------------------------------
@@ -171,8 +217,6 @@ return [
     'requests' => [
 
         'message' => 'http.request',
-
-        'obfuscate_ip' => false, // false or callable, e.g. ObfuscateIp::level(2)
 
     ],
 
