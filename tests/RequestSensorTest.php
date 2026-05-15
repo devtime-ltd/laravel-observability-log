@@ -1162,6 +1162,59 @@ describe('config options', function () {
         (new RequestSensor)->handle(Request::create('/test'), fn () => new Response('OK', 200));
     });
 
+    it('falls back to $request->ip() when resolve_ip returns an empty string', function () {
+        config([
+            'observability-log.requests.channel' => 'test-channel',
+            'observability-log.requests.resolve_ip' => fn () => '',
+        ]);
+
+        $channel = Mockery::mock();
+        $channel->shouldReceive('log')
+            ->once()
+            ->withArgs(fn (string $level, string $message, array $context) => $context['ip'] === '127.0.0.1');
+
+        Log::shouldReceive('channel')->with('test-channel')->andReturn($channel);
+
+        (new RequestSensor)->handle(Request::create('/test'), fn () => new Response('OK', 200));
+    });
+
+    it('fails closed when obfuscate_ip throws (logs null IP, not the raw value)', function () {
+        config([
+            'observability-log.requests.channel' => 'test-channel',
+            'observability-log.requests.obfuscate_ip' => function () {
+                throw new RuntimeException('obfuscator broke');
+            },
+        ]);
+
+        $channel = Mockery::mock();
+        $channel->shouldReceive('log')
+            ->once()
+            ->withArgs(fn (string $level, string $message, array $context) => $context['ip'] === null);
+
+        Log::shouldReceive('channel')->with('test-channel')->andReturn($channel);
+        Log::shouldReceive('error')->once()->with(Mockery::pattern('/obfuscate_ip callable threw.*obfuscator broke/'));
+
+        (new RequestSensor)->handle(Request::create('/test'), fn () => new Response('OK', 200));
+    });
+
+    it('trims args to arity for one-arg internal-function obfuscators', function () {
+        // PHP internal functions raise ArgumentCountError on extra positional args.
+        // The reflection-based arity check should call strtoupper with only the IP.
+        config([
+            'observability-log.requests.channel' => 'test-channel',
+            'observability-log.requests.obfuscate_ip' => 'strtoupper',
+        ]);
+
+        $channel = Mockery::mock();
+        $channel->shouldReceive('log')
+            ->once()
+            ->withArgs(fn (string $level, string $message, array $context) => $context['ip'] === '127.0.0.1');
+
+        Log::shouldReceive('channel')->with('test-channel')->andReturn($channel);
+
+        (new RequestSensor)->handle(Request::create('/test'), fn () => new Response('OK', 200));
+    });
+
     it('uses message from config', function () {
         config([
             'observability-log.requests.channel' => 'test-channel',
