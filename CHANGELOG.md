@@ -1,6 +1,20 @@
 # Changelog
 
-## [Unreleased]
+## [0.6.0] - 2026-05-15
+
+### Breaking
+
+- Replaced `ObfuscateIp::level(int)` (a closure factory) with four named static methods: `ObfuscateIp::levelOne`, `levelTwo`, `levelThree`, `levelFour`. Use them as array callables (`[ObfuscateIp::class, 'levelTwo']`) so `obfuscate_ip` survives `php artisan config:cache` (which serialises via `var_export` and chokes on closures). Closures stored in config previously broke config caching silently for any user who tried it.
+- The published `requests.obfuscate_ip` key is gone from `config/observability-log.php`. The key is now hoisted to the top level so it applies to every IP-capturing sensor. Per-sensor override still works (set `requests.obfuscate_ip` / `exceptions.obfuscate_ip` and the sensor's value wins). Republish or remove the stale line.
+
+### Added
+
+- Top-level `obfuscate_ip` config key, inherited by the `RequestSensor` and `ExceptionSensor` (the only sensors that capture an IP). Override per sensor by setting the same key inside that sensor's section. Callable signature is `fn (?string $ip, ?Illuminate\Http\Request $request = null): ?string`; the second arg enables route-aware masking. Existing one-arg callables still work (PHP silently drops the extra positional arg).
+- Top-level `resolve_ip` config key for cases where the client IP arrives via a custom header chain that Laravel's trusted-proxy handling does not cover. Signature `fn (Illuminate\Http\Request $request): ?string`; the package falls back to `$request->ip()` when the callable throws or returns a non-string (and logs the throw via `Log::error`). Like `obfuscate_ip`, overridable per sensor.
+
+### Fixed
+
+- `ExceptionSensor` now applies `obfuscate_ip` to its `ip` field. Previously the key only existed under `requests`, so unhandled-exception entries always logged the raw IP.
 
 ## [0.5.1] - 2026-05-01
 

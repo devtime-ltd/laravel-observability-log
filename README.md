@@ -70,11 +70,20 @@ return [
     'db_collect_queries' => true,
     'db_slow_query_threshold' => 100,
     'db_slow_queries_max_count' => 100,
+    'resolve_ip' => null,
+    'obfuscate_ip' => null,
     // ...
 ];
 ```
 
-`level` is the default for every entry. `failed_level` is used instead when a sensor emits an entry with `status: failed` (a failed job attempt, a non-zero command exit, a failed scheduled task), on `RequestSensor` for 5xx responses, on `OutgoingHttpSensor` for 5xx responses and connection failures, and on every `ExceptionSensor` entry (every unhandled exception is considered a failure). `failures_only` drops routine "success" entries across every sensor that has a failure bucket; useful when log volume is high and only error traffic is interesting. `capture_headers` applies to the request, exception, and outgoing HTTP sensors. The `db_*` keys only apply to sensors that track DB stats (request, job, command, scheduled task).
+`level` is the default for every entry. `failed_level` is used instead when a sensor emits an entry with `status: failed` (a failed job attempt, a non-zero command exit, a failed scheduled task), on `RequestSensor` for 5xx responses, on `OutgoingHttpSensor` for 5xx responses and connection failures, and on every `ExceptionSensor` entry (every unhandled exception is considered a failure). `failures_only` drops routine "success" entries across every sensor that has a failure bucket; useful when log volume is high and only error traffic is interesting. `capture_headers` applies to the request, exception, and outgoing HTTP sensors. The `db_*` keys only apply to sensors that track DB stats (request, job, command, scheduled task). The `resolve_ip` and `obfuscate_ip` keys only apply to sensors that capture an IP (request and exception); see [IP resolution and obfuscation](#ip-resolution-and-obfuscation).
+
+> **`php artisan config:cache` and callables:** Laravel serialises the cached config via `var_export`, which cannot encode closures. Any config value that is a `Closure` (the `resolve_ip`, `obfuscate_ip`, and `trace_id` keys all accept callables) will throw `LogicException: Your configuration files are not serializable.` when caching is enabled. Use one of these cache-safe forms instead:
+>
+> - Static method array: `[ObfuscateIp::class, 'levelTwo']` (the method must be `public static`)
+> - Static method string: `'App\Support\ResolveClientIp::resolve'`
+>
+> Note that invokable classes (objects with `__invoke`) are not cache-safe in this slot: `is_callable('App\Support\ResolveClientIp')` is false (PHP does not auto-instantiate from a class string), and `var_export` cannot cleanly serialise the instance. If you need an invokable or any other closure-based resolver, skip the config slot and wire it at runtime in `AppServiceProvider::boot()` via the sensor's `extend()` / `using()` callbacks.
 
 ## Request sensor
 
@@ -98,7 +107,7 @@ return [
 | `response_size`      | Response body size in bytes                                          |
 | `redirect_to`        | `Location` header on redirect responses (see [Redirect target](#redirect-target)) |
 | `user_id`            | Authenticated user ID (null if guest)                                |
-| `ip`                 | Client IP (supports obfuscation, see [below](#ip-obfuscation))       |
+| `ip`                 | Client IP (resolution and masking, see [below](#ip-resolution-and-obfuscation)) |
 | `user_agent`         | User-Agent header value                                              |
 | `referer`            | Referer header value                                                 |
 | `duration_ms`        | Total request time in milliseconds                                   |
@@ -114,32 +123,43 @@ return [
 ```php
 'requests' => [
     'message' => 'http.request',
-    'obfuscate_ip' => false, // false or callable, e.g. ObfuscateIp::level(2)
 ],
 ```
 
-Inherits the shared `channel`, `level`, `failed_level`, `failures_only`, `capture_headers`, and `db_*` defaults; override any of them by setting the same key inside this section.
+Inherits the shared `channel`, `level`, `failed_level`, `failures_only`, `capture_headers`, `db_*`, `resolve_ip`, and `obfuscate_ip` defaults; override any of them by setting the same key inside this section.
 
-### IP obfuscation
+### IP resolution and obfuscation
 
-Mask client IPs using the built-in `ObfuscateIp` class:
+Both `resolve_ip` and `obfuscate_ip` are read from the package's top-level config and inherited by every sensor that captures a client IP (request, exception). Override per-sensor by setting the same key inside that sensor's section. `resolve_ip` runs first; `obfuscate_ip` runs on the resolved value.
 
-| Level | IPv4 example (`198.51.100.123`) | IPv6  |
-| ----- | ------------------------------- | ----- |
-| 1     | `198.51.100.0`                  | `/96` |
-| 2     | `198.51.0.0`                    | `/64` |
-| 3     | `198.0.0.0`                     | `/32` |
-| 4     | `0.0.0.0`                       | `::`  |
+#### `resolve_ip`
+
+Override Laravel's `$request->ip()` when the client IP arrives via a custom header chain that trusted-proxy handling does not cover:
+
+```php
+'resolve_ip' => [App\Support\ResolveClientIp::class, 'resolve'],
+```
+
+Signature: `fn (Illuminate\Http\Request $request): ?string`. Returns null / non-string / throws then the package falls back to `$request->ip()` (and logs the throw via `Log::error`).
+
+#### `obfuscate_ip`
+
+Mask the resolved IP using the built-in `ObfuscateIp` class:
+
+| Method       | IPv4 example (`198.51.100.123`) | IPv6  |
+| ------------ | ------------------------------- | ----- |
+| `levelOne`   | `198.51.100.0`                  | `/96` |
+| `levelTwo`   | `198.51.0.0`                    | `/64` |
+| `levelThree` | `198.0.0.0`                     | `/32` |
+| `levelFour`  | `0.0.0.0`                       | `::`  |
 
 ```php
 use DevtimeLtd\LaravelObservabilityLog\ObfuscateIp;
 
-'requests' => [
-    'obfuscate_ip' => ObfuscateIp::level(2),
-],
+'obfuscate_ip' => [ObfuscateIp::class, 'levelTwo'],
 ```
 
-Or pass any callable for custom masking, e.g. `fn (?string $ip) => 'redacted'`.
+Signature: `fn (?string $ip, ?Illuminate\Http\Request $request = null): ?string`. The request is passed for route-aware masking; callables that only declare the first parameter still work (PHP silently drops the extra positional arg). Pass any callable for custom masking, e.g. `fn (?string $ip) => 'redacted'`, or use a static method / invokable class to stay config-cache-safe.
 
 ### Redirect target
 
@@ -648,11 +668,15 @@ Every sensor entry can include a top-level `trace_id` so records from the same l
 
 The sensor tries three sources in order:
 
-1. **Configured callable.** Set `observability-log.trace_id` to a closure for full control:
+1. **Configured callable.** Set `observability-log.trace_id` to any callable `fn (?Illuminate\Http\Request $request): ?string` for full control. Use a static-method form so `php artisan config:cache` does not choke on a closure (see the [callables and config:cache callout](#shared-defaults)):
+   ```php
+   'trace_id' => [App\Support\ResolveTraceId::class, 'resolve'],
+   ```
+   If you do not cache your config, an inline closure works the same way:
    ```php
    'trace_id' => fn (?Illuminate\Http\Request $request) => $request?->attributes->get('trace_id'),
    ```
-2. **Configured header list.** The default is a first-match-wins array:
+2. **Configured header list.** The default is a first-match-wins array (always cache-safe):
    ```php
    'trace_id' => ['X-Request-Id', 'X-Trace-Id', 'X-Correlation-Id'],
    ```

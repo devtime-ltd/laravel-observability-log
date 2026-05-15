@@ -2,23 +2,31 @@
 
 namespace DevtimeLtd\LaravelObservabilityLog;
 
-use Closure;
-
+/**
+ * Static IP masking methods, usable as `[ObfuscateIp::class, 'levelTwo']`
+ * callables in config. Plain arrays so `php artisan config:cache` (which
+ * serialises via var_export) does not choke on closures.
+ */
 class ObfuscateIp
 {
-    /** @var array<int, Closure> */
-    private static array $closures = [];
-
-    /**
-     * @param  int  $level  1-4 octets to mask (e.g. 198.51.100.123, level 1: 198.51.100.0, level 4: 0.0.0.0)
-     */
-    public static function level(int $level): Closure
+    public static function levelOne(?string $ip): ?string
     {
-        if ($level < 1 || $level > 4) {
-            throw new \InvalidArgumentException('IP masking level must be between 1 and 4.');
-        }
+        return self::mask($ip, 1);
+    }
 
-        return static::$closures[$level] ??= fn (?string $ip) => static::mask($ip, $level);
+    public static function levelTwo(?string $ip): ?string
+    {
+        return self::mask($ip, 2);
+    }
+
+    public static function levelThree(?string $ip): ?string
+    {
+        return self::mask($ip, 3);
+    }
+
+    public static function levelFour(?string $ip): ?string
+    {
+        return self::mask($ip, 4);
     }
 
     private static function mask(?string $ip, int $level): ?string
@@ -31,6 +39,6 @@ class ObfuscateIp
         $length = strlen($packed);
         $maskBytes = $length === 4 ? $level : $level * 4;
 
-        return inet_ntop(substr($packed, 0, $length - $maskBytes) . str_repeat("\0", $maskBytes));
+        return inet_ntop(substr($packed, 0, $length - $maskBytes).str_repeat("\0", $maskBytes));
     }
 }
