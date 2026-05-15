@@ -116,15 +116,9 @@ return [
     |--------------------------------------------------------------------------
     |
     | Array of request header names (first non-empty wins) or a callable
-    | fn (?Illuminate\Http\Request $request): ?string. Falls back to
-    | Illuminate\Support\Facades\Context::get('trace_id') when neither
-    | resolves. Emitted as the top-level "trace_id" field.
-    |
-    | A closure here will break `php artisan config:cache` (var_export
-    | cannot serialise closures). Use a static-method callable instead,
-    | e.g. [App\Support\ResolveTraceId::class, 'resolve'] or
-    | 'App\Support\ResolveTraceId::resolve'. Header-list arrays are
-    | always cache-safe.
+    | fn (?Request): ?string. Falls back to Context::get('trace_id').
+    | Closures break `php artisan config:cache`; use a static-method
+    | callable instead, e.g. [App\Support\ResolveTraceId::class, 'resolve'].
     |
     */
 
@@ -150,13 +144,10 @@ return [
     | Client IP resolution
     |--------------------------------------------------------------------------
     |
-    | Callable `fn (Illuminate\Http\Request $request): ?string` invoked to
-    | resolve the client IP. Useful when the IP is carried in a custom
-    | header chain that Laravel's trusted proxy handling does not cover.
-    | Falls back to $request->ip() when null, when the callable returns
-    | non-string, or when it throws. Override per sensor by setting
-    | "resolve_ip" inside that sensor's section. Applies to the request
-    | and exception sensors.
+    | Callable `fn (Request): ?string` for custom client-IP resolution
+    | when trusted-proxy handling does not cover the relevant headers.
+    | Falls back to $request->ip() on null / non-string / throw. Per-sensor
+    | override. Applies to RequestSensor and ExceptionSensor.
     |
     */
 
@@ -167,19 +158,11 @@ return [
     | IP obfuscation
     |--------------------------------------------------------------------------
     |
-    | Callable `fn (?string $ip, ?Illuminate\Http\Request $request = null): ?string`
-    | applied to the resolved IP before it is logged. The request is
-    | passed as an optional second arg for route-aware masking; callables
-    | that declare a single `?string` parameter still work. Use the named
-    | static methods on ObfuscateIp (levelOne..levelFour) so the config
-    | remains var_export-safe under `php artisan config:cache`; a closure
-    | here will break config caching. Set to null/false to log IPs
-    | verbatim. Override per sensor by setting "obfuscate_ip" inside
-    | that sensor's section. Applies to the request and exception sensors.
-    |
-    | Example:
-    |   use DevtimeLtd\LaravelObservabilityLog\ObfuscateIp;
-    |   'obfuscate_ip' => [ObfuscateIp::class, 'levelTwo'],
+    | Callable `fn (?string $ip, ?Request $request = null): ?string` applied
+    | to the resolved IP before logging. Use a static-method callable
+    | (e.g. [ObfuscateIp::class, 'levelTwo']) so the value survives
+    | `php artisan config:cache`. Null logs IPs verbatim. Per-sensor
+    | override. Applies to RequestSensor and ExceptionSensor.
     |
     */
 
