@@ -1178,6 +1178,24 @@ describe('config options', function () {
         (new RequestSensor)->handle(Request::create('/test'), fn () => new Response('OK', 200));
     });
 
+    it('fails closed when obfuscate_ip returns a non-string non-null value', function () {
+        // A misconfigured obfuscator that returns false / an array / an int
+        // must not leave the unmasked IP in the log entry.
+        config([
+            'observability-log.requests.channel' => 'test-channel',
+            'observability-log.requests.obfuscate_ip' => fn (?string $ip) => false,
+        ]);
+
+        $channel = Mockery::mock();
+        $channel->shouldReceive('log')
+            ->once()
+            ->withArgs(fn (string $level, string $message, array $context) => $context['ip'] === null);
+
+        Log::shouldReceive('channel')->with('test-channel')->andReturn($channel);
+
+        (new RequestSensor)->handle(Request::create('/test'), fn () => new Response('OK', 200));
+    });
+
     it('fails closed when obfuscate_ip throws (logs null IP, not the raw value)', function () {
         config([
             'observability-log.requests.channel' => 'test-channel',

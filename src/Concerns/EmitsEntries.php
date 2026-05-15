@@ -78,9 +78,7 @@ trait EmitsEntries
         $obfuscate = self::sensorConfig('obfuscate_ip');
         if (is_callable($obfuscate)) {
             $masked = self::invokeConfigCallable($obfuscate, 'obfuscate_ip', [$ip, $request]);
-            if (is_string($masked) || $masked === null) {
-                $ip = $masked;
-            }
+            $ip = is_string($masked) ? $masked : null;
         }
 
         return is_string($ip) ? $ip : null;
