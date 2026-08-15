@@ -342,4 +342,69 @@ return [
 
     ],
 
+    /*
+    |--------------------------------------------------------------------------
+    | Client logging
+    |--------------------------------------------------------------------------
+    |
+    | Telemetry from the browser: unhandled JS errors, Core Web Vitals,
+    | named custom events, and (for SPAs) client-side pageviews. Emits
+    | "client.error", "client.vital", "client.event" and
+    | "client.pageview".
+    |
+    | This is the one sensor that opens a public write endpoint, so it
+    | does not inherit the top-level channel: set its own env var to
+    | switch it on. The route is registered only while it is on, so
+    | run "php artisan route:clear" after enabling if you cache routes.
+    |
+    | Entries carry the same trace_id as the request that rendered the
+    | page, so a browser error joins to its "http.request" entry.
+    |
+    */
+
+    'client' => [
+
+        'channel' => env('OBSERVABILITY_LOG_CLIENT_CHANNEL'),
+
+        'messages' => [
+            'error' => 'client.error',
+            'vital' => 'client.vital',
+            'event' => 'client.event',
+            'pageview' => 'client.pageview',
+        ],
+
+        // Path the browser posts to. Registered outside the "web" group:
+        // sendBeacon cannot set headers, so there is no session or CSRF.
+        'path' => '_observability',
+
+        'middleware' => ['throttle:60,1'],
+
+        // Kinds accepted. Pageviews are off because a server-rendered
+        // page already logs an "http.request"; turn them on for an SPA,
+        // where client-side routing never reaches the server.
+        'collect' => ['error', 'vital', 'event'],
+
+        // Allowlist for custom event names. Empty accepts none. Names
+        // outside the list are dropped, so a stranger cannot write
+        // arbitrary strings into your log stream.
+        'events' => [
+            // 'copy',
+        ],
+
+        // Fraction of vitals and pageviews the browser sends. Applied
+        // client-side, so a sampled-out entry costs no request.
+        'sample_rate' => 1.0,
+
+        // Transport caps. A body over the byte cap is rejected before
+        // it is decoded; a batch over the entry cap is truncated.
+        'max_body_bytes' => 8192,
+        'max_entries' => 20,
+
+        // Per-field caps applied to whatever the browser sent.
+        'stack_max_bytes' => 4096,
+        'max_props' => 10,
+        'prop_max_length' => 200,
+
+    ],
+
 ];

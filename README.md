@@ -2,7 +2,7 @@
 
 A set of sensors that emit structured events through Laravel log channels. Whatever log driver you use (stack, Axiom, Better Stack, Papertrail, stderr) doubles as your observability pipeline.
 
-Ships six sensors today (`RequestSensor`, `ExceptionSensor`, `JobSensor`, `CommandSensor`, `ScheduledTaskSensor`, `OutgoingHttpSensor`), with more on the [roadmap](#roadmap).
+Ships seven sensors today (`RequestSensor`, `ExceptionSensor`, `JobSensor`, `CommandSensor`, `ScheduledTaskSensor`, `OutgoingHttpSensor`, `ClientSensor`), with more on the [roadmap](#roadmap).
 
 ## Design philosophy
 
@@ -601,6 +601,146 @@ OutgoingHttpSensor::using(function ($event, array $measurements) {
 OutgoingHttpSensor::message(fn ($event) => $event instanceof ConnectionFailed ? 'http.outgoing.failed' : 'http.outgoing');
 ```
 
+## Client sensor
+
+`ClientSensor` collects from the browser: unhandled JS errors, Core Web Vitals, named custom events, and client-side pageviews for SPAs. Entries carry the trace ID of the request that rendered the page, so a browser error joins to its `http.request` entry, beside that request's own `duration_ms` and `db_query_count`.
+
+It is the one sensor that opens a public write endpoint, so it does **not** inherit the top-level channel. Switch it on with its own env var:
+
+```env
+OBSERVABILITY_LOG_CLIENT_CHANNEL=axiom
+```
+
+The route is registered only while the sensor is on, so run `php artisan route:clear` after enabling it on an app that caches routes.
+
+Then add the agent to your layout:
+
+```blade
+<head>
+    @observability
+</head>
+```
+
+The directive inlines a ~1.3 KB (gzipped) script and the config it needs. It exposes `window.observability` (`track`, `pageview`, `flush`, `captureError`) so a page with no build step can emit events:
+
+```html
+<button onclick="observability.track('copy', { field: 'countryCode' })">Copy</button>
+```
+ It renders nothing while the sensor is off, so it is safe to leave in a shared layout. Pass a CSP nonce or override the trace ID with an array: `@observability(['nonce' => $nonce])`.
+
+### Logged fields
+
+Four messages, each fixed rather than built from anything the browser sent.
+
+| Message | Fields on top of the shared set |
+| --- | --- |
+| `client.error` | `error_message`, `error_type`, `source`, `line`, `col`, `stack`, `handled` |
+| `client.vital` | `vital` (`LCP`, `CLS`, `INP`, `TTFB`, `FCP`), `value`, `rating` |
+| `client.event` | `event`, `props` |
+| `client.pageview` | `from`, `to`, `nav_type` (`load` or `spa`) |
+
+Every entry also carries `kind`, `page_id`, `trace_id`, `url`, `host`, `path`, `referrer`, `viewport`, `user_agent` and `ip`. The IP resolves and masks through the same `resolve_ip` / `obfuscate_ip` config as every other sensor.
+
+Errors log at `failed_level`; the rest at `level`.
+
+### Custom events
+
+Event names are allowlisted, so a stranger cannot write arbitrary strings into your log stream:
+
+```php
+'client' => [
+    'events' => ['copy', 'tab', 'field'],
+],
+```
+
+An empty list accepts none, which is the default.
+
+### Pageviews
+
+Off by default: on a server-rendered site every page view already logs an `http.request`. Turn them on for an SPA, where client-side routing never reaches the server:
+
+```php
+'client' => [
+    'collect' => ['error', 'vital', 'event', 'pageview'],
+],
+```
+
+Nothing is collected until something calls `pageview()`, so a Blade app cannot double-count by accident.
+
+### Options
+
+| Key | Default | Notes |
+| --- | --- | --- |
+| `channel` | `env('OBSERVABILITY_LOG_CLIENT_CHANNEL')` | On/off switch. Does not inherit the top-level channel. |
+| `path` | `_observability` | Where the browser POSTs. Registered outside the `web` group: `sendBeacon` cannot set headers, so there is no session or CSRF. |
+| `middleware` | `['throttle:60,1']` | Applied to that route. |
+| `collect` | `['error', 'vital', 'event']` | Kinds accepted. |
+| `events` | `[]` | Allowlist for custom event names. |
+| `sample_rate` | `1.0` | Fraction of vitals and pageviews the browser sends. Applied client-side, so a sampled-out entry costs no request. |
+| `max_body_bytes` | `8192` | Bodies over this are dropped before they are decoded. |
+| `max_entries` | `20` | Batches over this are truncated. |
+| `stack_max_bytes` | `4096` | Cap on a reported stack. |
+| `max_props` | `10` | Cap on event props. |
+| `prop_max_length` | `200` | Cap on each prop's string value. |
+
+Whatever it decides, the endpoint answers `204` with no body, so it cannot be used to probe what an app collects.
+
+### Browser package
+
+For apps with a build step, the same agent ships on npm:
+
+```bash
+npm install @devtime-ltd/observability-client
+```
+
+```js
+import { init, track } from "@devtime-ltd/observability-client";
+
+init({ endpoint: "/_observability", collect: ["error", "vital", "event"], trace_id: traceId });
+
+track("copy", { field: "countryCode" });
+```
+
+`captureError(error)` reports one you caught yourself. `flush()` sends the buffer early; it flushes on `visibilitychange` and `pagehide` on its own.
+
+React:
+
+```jsx
+import { ObservabilityProvider, useTrack } from "@devtime-ltd/observability-client/react";
+
+<ObservabilityProvider config={config}>
+    <App />
+</ObservabilityProvider>;
+
+const track = useTrack();
+```
+
+Inertia, where visits change route without a server request:
+
+```js
+import { observeInertia } from "@devtime-ltd/observability-client/inertia";
+
+observeInertia(config, { traceId: (page) => page.props.traceId });
+```
+
+Router events cannot read response headers, so share the trace ID from `HandleInertiaRequests::share()` and read it from the page props as above.
+
+Both the npm build and the inlined script come from one TypeScript source, and CI fails if the committed `resources/client.min.js` does not match a fresh build.
+
+### Customising the entry
+
+`ClientSensor::extend/using/message` take the kind as their second argument. `using()` receives the raw browser payload, so anything it keeps is unvalidated.
+
+```php
+ClientSensor::extend(function ($request, string $kind, array $entry) {
+    $entry['release'] = config('app.release');
+
+    return $entry;
+});
+
+ClientSensor::message(fn (string $kind) => 'browser.'.$kind);
+```
+
 ## Header capture
 
 Off by default on the request and exception sensors (job entries don't capture headers). Typical payload adds 1 to 3 KB per entry. Enable for the whole package:
@@ -726,6 +866,7 @@ Each row shows the event name emitted on the configured log channel.
 - [x] `CommandSensor` (`console.command`), Artisan command completions
 - [x] `ScheduledTaskSensor` (`schedule.task`), scheduled task completions
 - [x] `OutgoingHttpSensor` (`http.outgoing`), outgoing HTTP via the `Http` facade
+- [x] `ClientSensor` (`client.error`, `client.vital`, `client.event`, `client.pageview`), browser telemetry
 - [ ] `CacheSensor` (`cache.hit`, `cache.miss`, `cache.write`, `cache.delete`), cache operations
 - [ ] `MailSensor` (`mail.sent`), mail delivery
 - [ ] `NotificationSensor` (`notification.sent`), notification delivery
@@ -734,6 +875,12 @@ Each row shows the event name emitted on the configured log channel.
 
 ```bash
 composer test
+```
+
+The browser agent has its own suite:
+
+```bash
+cd js && npm ci && npm test
 ```
 
 ## Credits
