@@ -2,6 +2,10 @@
 
 ## [0.7.0] - 2026-08-15
 
+### Breaking
+
+- Dropped Laravel 11 support; the package now requires `^12.0|^13.0`. Laravel 11 is out of security support and Composer refuses to install any 11.x release, so the matrix could no longer verify the claim. Stay on 0.6.x if you are still on Laravel 11.
+
 ### Added
 
 - `ClientSensor`, browser telemetry through the same log channels as every other sensor: unhandled JS errors and promise rejections (`client.error`), Core Web Vitals (`client.vital`), allowlisted custom events (`client.event`), and client-side pageviews for SPAs (`client.pageview`). Entries carry the trace ID of the request that rendered the page, so a browser error joins to its own `http.request` entry.

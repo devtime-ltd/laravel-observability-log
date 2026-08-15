@@ -14,10 +14,18 @@ jobs:
       fail-fast: true
       matrix:
         php: ['8.2', '8.3', '8.4']
-        laravel: ['11.*', '12.*', '13.*']
+        laravel: ['12.*', '13.*']
         exclude:
           - php: '8.2'
             laravel: '13.*'
+        # Testbench majors track framework majors, and every illuminate
+        # package has to move with them or the matrix row resolves to a
+        # mixed set and fails.
+        include:
+          - laravel: '12.*'
+            testbench: '10.*'
+          - laravel: '13.*'
+            testbench: '11.*'
 
     name: PHP ${{ matrix.php }} / Laravel ${{ matrix.laravel }}
 
@@ -33,7 +41,12 @@ jobs:
 
       - name: Install dependencies
         run: |
-          composer require "illuminate/support:${{ matrix.laravel }}" --no-interaction --no-update
+          composer require \
+            "illuminate/support:${{ matrix.laravel }}" \
+            "illuminate/database:${{ matrix.laravel }}" \
+            "illuminate/http:${{ matrix.laravel }}" \
+            "orchestra/testbench:${{ matrix.testbench }}" \
+            --no-interaction --no-update
           composer update --prefer-dist --no-interaction
 
       - name: Run tests
