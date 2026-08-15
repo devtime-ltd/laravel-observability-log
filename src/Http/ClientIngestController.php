@@ -10,8 +10,10 @@ use Illuminate\Http\Response;
  * The package's only public write endpoint. Everything it accepts is
  * attacker-controlled, so the body is capped before it is decoded, the
  * batch is capped before it is walked, and every field is validated by
- * ClientSensor rather than passed through. It answers 204 whatever it
- * decides, so it cannot be used to probe what an app collects.
+ * ClientSensor rather than passed through. Every path through the
+ * controller answers 204, so it cannot be used to probe what an app
+ * collects; the configured middleware still answers for itself (a
+ * throttled request gets the usual 429).
  */
 class ClientIngestController
 {
@@ -23,9 +25,18 @@ class ClientIngestController
             return $accepted;
         }
 
+        $max = self::intConfig('max_body_bytes', 8192);
+        $declared = $request->server('CONTENT_LENGTH');
+
+        // Checked before reading, so an oversized body is refused on its
+        // header rather than pulled into memory first.
+        if (is_numeric($declared) && (int) $declared > $max) {
+            return $accepted;
+        }
+
         $body = $request->getContent();
 
-        if (! is_string($body) || strlen($body) > self::intConfig('max_body_bytes', 8192)) {
+        if (! is_string($body) || strlen($body) > $max) {
             return $accepted;
         }
 

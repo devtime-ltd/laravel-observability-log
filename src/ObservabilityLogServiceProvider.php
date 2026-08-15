@@ -79,13 +79,13 @@ class ObservabilityLogServiceProvider extends ServiceProvider
 
     /**
      * The directive is always available so a view that uses it does not
-     * render a raw @observability when the sensor is off; the route only
+     * render a raw @observabilityClient when the sensor is off; the route only
      * exists while it is on, which is why enabling it needs a route:clear
      * on an app that caches routes.
      */
     private function registerClientSensor(): void
     {
-        Blade::directive('observability', function (string $expression) {
+        Blade::directive('observabilityClient', function (string $expression) {
             $expression = trim($expression);
 
             return "<?php echo \DevtimeLtd\LaravelObservabilityLog\ClientScript::render(".($expression === '' ? '[]' : $expression).'); ?>';
