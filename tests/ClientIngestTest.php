@@ -100,6 +100,22 @@ describe('client ingest endpoint', function () {
         postEntries('not json at all')->assertNoContent();
     });
 
+    it('refuses an oversized body on its declared length', function () {
+        config([
+            'observability-log.client.channel' => 'test-channel',
+            'observability-log.client.max_body_bytes' => 64,
+        ]);
+        bootClientRoutes();
+
+        Log::shouldReceive('channel')->never();
+
+        test()->call('POST', '/_observability', [], [], [], [
+            'CONTENT_TYPE' => 'application/json',
+            'CONTENT_LENGTH' => '99999',
+        ], json_encode(['entries' => [['kind' => 'error', 'message' => 'boom']]]))
+            ->assertNoContent();
+    });
+
     it('answers 204 to a json scalar', function () {
         config(['observability-log.client.channel' => 'test-channel']);
         bootClientRoutes();
@@ -156,6 +172,32 @@ describe('client script directive', function () {
         expect(ClientScript::render(['nonce' => 'abc123']))->toStartWith('<script nonce="abc123">');
     });
 
+    it('prefixes the endpoint for an app mounted in a subdirectory', function () {
+        config([
+            'observability-log.client.channel' => 'test-channel',
+            'observability-log.client.path' => '_obs',
+        ]);
+
+        // A request whose script name puts Laravel under /app.
+        $request = Illuminate\Http\Request::create('/app/pricing', 'GET', [], [], [], [
+            'SCRIPT_FILENAME' => '/var/www/app/public/index.php',
+            'SCRIPT_NAME' => '/app/index.php',
+            'PHP_SELF' => '/app/index.php',
+        ]);
+        app()->instance('request', $request);
+
+        expect(ClientScript::render())->toContain('"endpoint":"/app/_obs"');
+    });
+
+    it('tells the browser the body cap so it can split a batch', function () {
+        config([
+            'observability-log.client.channel' => 'test-channel',
+            'observability-log.client.max_body_bytes' => 4096,
+        ]);
+
+        expect(ClientScript::render())->toContain('"max_bytes":4096');
+    });
+
     it('escapes a trace id that would close the script tag', function () {
         config(['observability-log.client.channel' => 'test-channel']);
 
@@ -168,14 +210,14 @@ describe('client script directive', function () {
     it('renders through the blade directive', function () {
         config(['observability-log.client.channel' => 'test-channel']);
 
-        expect(Illuminate\Support\Facades\Blade::render('@observability'))
+        expect(Illuminate\Support\Facades\Blade::render('@observabilityClient'))
             ->toContain('window.__observability=');
     });
 
     it('passes options through the blade directive', function () {
         config(['observability-log.client.channel' => 'test-channel']);
 
-        expect(Illuminate\Support\Facades\Blade::render("@observability(['nonce' => 'n1'])"))
+        expect(Illuminate\Support\Facades\Blade::render("@observabilityClient(['nonce' => 'n1'])"))
             ->toStartWith('<script nonce="n1">');
     });
 });

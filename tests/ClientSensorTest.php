@@ -253,6 +253,39 @@ describe('client logging', function () {
         expect($entry['context']['props'])->toBe(['ok' => 'yes']);
     });
 
+    it('drops routine kinds when the app asks for failures only', function () {
+        config([
+            'observability-log.client.channel' => 'test-channel',
+            'observability-log.client.failures_only' => true,
+            'observability-log.client.events' => ['copy'],
+        ]);
+
+        Log::shouldReceive('channel')->never();
+
+        ClientSensor::record(browserRequest(), ['kind' => 'event', 'name' => 'copy']);
+        ClientSensor::record(browserRequest(), ['kind' => 'vital', 'name' => 'LCP', 'value' => 1]);
+    });
+
+    it('still logs errors when the app asks for failures only', function () {
+        $entry = recordClient(['kind' => 'error', 'message' => 'boom'], function () {
+            config(['observability-log.client.failures_only' => true]);
+        });
+
+        expect($entry['context']['error_message'])->toBe('boom');
+    });
+
+    it('drops props whose key or value is only whitespace', function () {
+        $entry = recordClient([
+            'kind' => 'event',
+            'name' => 'copy',
+            'props' => ['  ' => 'value', 'blank' => '   ', 'ok' => 'yes'],
+        ], function () {
+            config(['observability-log.client.events' => ['copy']]);
+        });
+
+        expect($entry['context']['props'])->toBe(['ok' => 'yes']);
+    });
+
     it('masks the ip with the configured obfuscator', function () {
         $entry = recordClient(['kind' => 'error', 'message' => 'boom'], function () {
             config(['observability-log.client.obfuscate_ip' => [ObfuscateIp::class, 'levelOne']]);

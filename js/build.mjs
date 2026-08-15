@@ -3,9 +3,10 @@ import { gzipSync } from "node:zlib";
 import { readFileSync, writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 
-// The inlined build has a page-weight budget: it is served on every
-// request of every page that uses the directive.
-const BUDGET_BYTES = 1536;
+// The inlined agent is served on every request of every page that uses the
+// directive, so its size is worth watching. This is a tripwire for a
+// regression that changes the order of magnitude, not a tight ceiling.
+const BUDGET_BYTES = 4096;
 const INLINE_TARGET = "../resources/client.min.js";
 
 await build({

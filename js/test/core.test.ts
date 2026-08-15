@@ -280,3 +280,120 @@ describe("vitals", () => {
         expect(payloads().filter((e) => e.name === "FCP")).toHaveLength(1);
     });
 });
+
+/** Captures each PerformanceObserver callback by the entry type it observes. */
+function observeVitals(): Record<string, (entries: any[]) => void> {
+    const byType: Record<string, (entries: any[]) => void> = {};
+
+    vi.stubGlobal(
+        "PerformanceObserver",
+        class {
+            cb: (list: any) => void;
+            constructor(cb: (list: any) => void) {
+                this.cb = cb;
+            }
+            observe(options: { type: string }) {
+                byType[options.type] = (entries) => this.cb({ getEntries: () => entries });
+            }
+        }
+    );
+
+    return byType;
+}
+
+describe("CLS", () => {
+    it("reports the worst session window rather than the sum", async () => {
+        const observers = observeVitals();
+        const { init: freshInit } = await import("../src/core");
+        freshInit({ endpoint: "/_observability", collect: ["vital"] });
+
+        observers["layout-shift"]([
+            // One window: three shifts inside a second of each other.
+            { startTime: 0, value: 0.05, hadRecentInput: false },
+            { startTime: 500, value: 0.05, hadRecentInput: false },
+            { startTime: 900, value: 0.05, hadRecentInput: false },
+            // A new window, more than 1s later, and smaller.
+            { startTime: 5000, value: 0.02, hadRecentInput: false },
+            // Ignored: the user caused it.
+            { startTime: 5200, value: 0.9, hadRecentInput: true },
+        ]);
+
+        dispatchEvent(new Event("pagehide"));
+
+        const cls = payloads().find((e) => e.name === "CLS");
+
+        expect(cls.value).toBeCloseTo(0.15, 5);
+        expect(cls.rating).toBe("needs-improvement");
+    });
+});
+
+describe("INP", () => {
+    it("takes the slowest interaction below 50 of them", async () => {
+        const observers = observeVitals();
+        const { init: freshInit } = await import("../src/core");
+        freshInit({ endpoint: "/_observability", collect: ["vital"] });
+
+        observers.event([
+            { interactionId: 1, duration: 90 },
+            { interactionId: 1, duration: 120 },
+            { interactionId: 2, duration: 60 },
+            { interactionId: 0, duration: 5000 },
+        ]);
+
+        dispatchEvent(new Event("pagehide"));
+
+        expect(payloads().find((e) => e.name === "INP").value).toBe(120);
+    });
+
+    it("discounts one candidate per fifty interactions", async () => {
+        const observers = observeVitals();
+        const { init: freshInit } = await import("../src/core");
+        freshInit({ endpoint: "/_observability", collect: ["vital"] });
+
+        observers.event(
+            Array.from({ length: 60 }, (_, i) => ({ interactionId: i + 1, duration: 100 + i }))
+        );
+
+        dispatchEvent(new Event("pagehide"));
+
+        // 60 interactions, so the worst is discarded and the second worst wins.
+        expect(payloads().find((e) => e.name === "INP").value).toBe(158);
+    });
+});
+
+describe("batching", () => {
+    it("splits a batch too big for the server rather than losing it", async () => {
+        const { init: freshInit, track: freshTrack, flush: freshFlush } = await import("../src/core");
+        freshInit({ endpoint: "/_observability", collect: ["event"], max_bytes: 400 });
+
+        freshTrack("copy", { note: "x".repeat(150) });
+        freshTrack("copy", { note: "y".repeat(150) });
+        freshFlush();
+
+        expect(sent.length).toBeGreaterThan(1);
+        expect(payloads()).toHaveLength(2);
+    });
+
+    it("drops a single entry that cannot fit rather than looping", async () => {
+        const { init: freshInit, track: freshTrack, flush: freshFlush } = await import("../src/core");
+        freshInit({ endpoint: "/_observability", collect: ["event"], max_bytes: 100 });
+
+        freshTrack("copy", { note: "z".repeat(500) });
+        freshFlush();
+
+        expect(sent).toHaveLength(0);
+    });
+
+    it("does not throw when a prop cannot be serialised", async () => {
+        const { init: freshInit, track: freshTrack, flush: freshFlush } = await import("../src/core");
+        freshInit({ endpoint: "/_observability", collect: ["event"] });
+
+        const circular: any = {};
+        circular.self = circular;
+
+        freshTrack("copy", { circular });
+
+        expect(() => freshFlush()).not.toThrow();
+        expect(sent).toHaveLength(0);
+    });
+});

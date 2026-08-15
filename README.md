@@ -617,16 +617,16 @@ Then add the agent to your layout:
 
 ```blade
 <head>
-    @observability
+    @observabilityClient
 </head>
 ```
 
-The directive inlines a ~1.3 KB (gzipped) script and the config it needs. It exposes `window.observability` (`track`, `pageview`, `flush`, `captureError`) so a page with no build step can emit events:
+The directive inlines a ~1.5 KB (gzipped) script and the config it needs. It exposes `window.observability` (`track`, `pageview`, `flush`, `captureError`) so a page with no build step can emit events:
 
 ```html
 <button onclick="observability.track('copy', { field: 'countryCode' })">Copy</button>
 ```
- It renders nothing while the sensor is off, so it is safe to leave in a shared layout. Pass a CSP nonce or override the trace ID with an array: `@observability(['nonce' => $nonce])`.
+ It renders nothing while the sensor is off, so it is safe to leave in a shared layout. Pass a CSP nonce or override the trace ID with an array: `@observabilityClient(['nonce' => $nonce])`.
 
 ### Logged fields
 
@@ -665,7 +665,7 @@ Off by default: on a server-rendered site every page view already logs an `http.
 ],
 ```
 
-Nothing is collected until something calls `pageview()`, so a Blade app cannot double-count by accident.
+The agent emits the first pageview itself on `init()`, then one per `pageview()` call from your router. A Blade app that never turns the kind on cannot double-count what `http.request` already records.
 
 ### Options
 

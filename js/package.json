@@ -35,7 +35,8 @@
     "scripts": {
         "build": "node build.mjs",
         "check": "tsc --noEmit",
-        "test": "vitest run"
+        "test": "vitest run",
+        "prepack": "node build.mjs"
     },
     "devDependencies": {
         "@types/react": "^19.0.0",

@@ -9,6 +9,8 @@ export interface Config {
     sample?: number;
     /** Trace id of the request that rendered the page, so entries join to it. */
     trace_id?: string | null;
+    /** Server's body cap. A batch over it is split rather than rejected whole. */
+    max_bytes?: number;
 }
 
 type Entry = Record<string, unknown> & { kind: Kind };
@@ -53,16 +55,46 @@ function enqueue(entry: Entry, immediate = false): void {
 export function flush(): void {
     if (!config || !queue.length) return;
 
-    const body = JSON.stringify({ entries: queue });
+    const batch = queue;
     queue = [];
+    send(batch);
+}
 
+/** Halves a batch too big for the server rather than losing all of it. */
+function send(entries: Entry[]): void {
+    let body: string;
+
+    try {
+        body = JSON.stringify({ entries });
+    } catch {
+        // A prop the caller passed is circular or a BigInt. Dropping it beats
+        // throwing out of the click handler that produced it.
+        return;
+    }
+
+    const cap = config?.max_bytes ?? 0;
+
+    if (cap && body.length > cap) {
+        if (entries.length < 2) return;
+
+        const half = Math.ceil(entries.length / 2);
+        send(entries.slice(0, half));
+        send(entries.slice(half));
+
+        return;
+    }
+
+    transmit(body);
+}
+
+function transmit(body: string): void {
     try {
         if (navigator.sendBeacon) {
             const blob = new Blob([body], { type: "application/json" });
-            if (navigator.sendBeacon(config.endpoint, blob)) return;
+            if (navigator.sendBeacon(config!.endpoint, blob)) return;
         }
 
-        void fetch(config.endpoint, {
+        void fetch(config!.endpoint, {
             method: "POST",
             body,
             headers: { "Content-Type": "application/json" },
@@ -170,18 +202,44 @@ function observe(type: string, cb: (entries: any[]) => void, extra?: Record<stri
 function watchVitals(): void {
     let lcp = 0;
     let cls = 0;
-    let inp = 0;
+    let session = 0;
+    let sessionStart = 0;
+    let sessionLast = 0;
+    const interactions = new Map<number, number>();
 
     observe("largest-contentful-paint", (entries) => {
         lcp = entries[entries.length - 1]?.startTime ?? lcp;
     });
 
+    // CLS is the worst 5s session window, not the sum over the page: shifts
+    // more than 1s apart, or beyond 5s from the window's start, open a new one.
     observe("layout-shift", (entries) => {
-        for (const entry of entries) if (!entry.hadRecentInput) cls += entry.value;
+        for (const entry of entries) {
+            if (entry.hadRecentInput) continue;
+
+            if (session && entry.startTime - sessionLast < 1000 && entry.startTime - sessionStart < 5000) {
+                session += entry.value;
+            } else {
+                session = entry.value;
+                sessionStart = entry.startTime;
+            }
+
+            sessionLast = entry.startTime;
+            cls = Math.max(cls, session);
+        }
     });
 
+    // INP is the slowest interaction, discounted by one candidate per 50
+    // interactions, rather than the slowest single event.
     observe("event", (entries) => {
-        for (const entry of entries) inp = Math.max(inp, entry.duration);
+        for (const entry of entries) {
+            if (!entry.interactionId) continue;
+
+            interactions.set(
+                entry.interactionId,
+                Math.max(entry.duration, interactions.get(entry.interactionId) ?? 0)
+            );
+        }
     }, { durationThreshold: 40 });
 
     observe("paint", (entries) => {
@@ -199,6 +257,10 @@ function watchVitals(): void {
     onHidden(() => {
         if (lcp) vital("LCP", lcp);
         if (cls) vital("CLS", cls);
+
+        const candidates = [...interactions.values()].sort((a, b) => b - a);
+        const inp = candidates[Math.min(candidates.length - 1, Math.floor(interactions.size / 50))];
+
         if (inp) vital("INP", inp);
     });
 }

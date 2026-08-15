@@ -6,7 +6,7 @@ use DevtimeLtd\LaravelObservabilityLog\Support\RequestContext;
 use Throwable;
 
 /**
- * Renders the browser agent for the @observability directive. The script
+ * Renders the browser agent for the @observabilityClient directive. The script
  * is inlined rather than served as an asset: one fewer request, no
  * cache-busting, and nothing to publish on upgrade.
  */
@@ -54,10 +54,16 @@ class ClientScript
     {
         $traceId = $options['trace_id'] ?? RequestContext::traceId(request());
 
+        $path = ltrim((string) config('observability-log.client.path', '_observability'), '/');
+
         return [
-            'endpoint' => '/'.ltrim((string) config('observability-log.client.path', '_observability'), '/'),
+            // Host-relative, so a multi-domain app posts to whichever host
+            // served the page, but prefixed for an app mounted in a
+            // subdirectory.
+            'endpoint' => rtrim(request()?->getBaseUrl() ?? '', '/').'/'.$path,
             'collect' => ClientSensor::collecting(),
             'sample' => self::sampleRate(),
+            'max_bytes' => (int) config('observability-log.client.max_body_bytes', 8192),
             'trace_id' => is_string($traceId) ? $traceId : null,
         ];
     }

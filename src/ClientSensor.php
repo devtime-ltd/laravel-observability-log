@@ -102,6 +102,12 @@ class ClientSensor
                 return;
             }
 
+            // Only an error counts as a failure here, so the rest go when an
+            // app asks for failures only, as they do on every other sensor.
+            if ($kind !== 'error' && self::sensorConfig('failures_only', false)) {
+                return;
+            }
+
             $entry = self::$usingCallback
                 ? self::safeCallback(self::$usingCallback, 'using', $request, $kind, $raw)
                 : null;
@@ -271,11 +277,18 @@ class ClientSensor
                 break;
             }
 
-            if (! is_string($key) || $key === '' || ! is_scalar($value)) {
+            if (! is_string($key) || ! is_scalar($value)) {
                 continue;
             }
 
-            $out[self::text($key, 60) ?? ''] = is_string($value) ? self::text($value, $length) : $value;
+            $name = self::text($key, 60);
+            $clean = is_string($value) ? self::text($value, $length) : $value;
+
+            if ($name === null || $clean === null) {
+                continue;
+            }
+
+            $out[$name] = $clean;
         }
 
         return $out === [] ? null : $out;
