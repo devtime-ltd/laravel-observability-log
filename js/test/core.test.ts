@@ -1,0 +1,282 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+import { captureError, flush, init, pageview, reset, setTraceId, track } from "../src/core";
+
+let sent: any[];
+let beaconOk: boolean;
+
+function payloads(): any[] {
+    return sent.flatMap((body) => JSON.parse(body).entries);
+}
+
+beforeEach(() => {
+    sent = [];
+    beaconOk = true;
+
+    // jsdom ships neither, and Blob.text() is async, so capture the raw body.
+    (navigator as any).sendBeacon = vi.fn((_url: string, blob: Blob) => {
+        if (!beaconOk) return false;
+        sent.push((blob as any)[Symbol.for("body")] ?? (blob as any).__body);
+        return true;
+    });
+
+    const RealBlob = globalThis.Blob;
+    vi.stubGlobal(
+        "Blob",
+        class extends RealBlob {
+            __body: string;
+            constructor(parts: any[], options?: any) {
+                super(parts, options);
+                this.__body = String(parts[0]);
+            }
+        }
+    );
+
+    vi.stubGlobal("fetch", vi.fn((_url: string, options: any) => {
+        sent.push(options.body);
+        return Promise.resolve({ ok: true });
+    }));
+});
+
+afterEach(() => {
+    reset();
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+});
+
+// No "pageview": init() emits one straight away when it is collected, which
+// would sit in front of whatever a test is asserting on.
+const config = { endpoint: "/_observability", collect: ["error", "vital", "event"] as const };
+const withPageviews = { endpoint: "/_observability", collect: ["pageview"] as const };
+
+describe("init", () => {
+    it("does nothing without a config", () => {
+        expect(() => init(undefined)).not.toThrow();
+
+        track("copy");
+        flush();
+
+        expect(sent).toHaveLength(0);
+    });
+
+    it("ignores a second call", () => {
+        init({ ...config, trace_id: "first" });
+        init({ ...config, trace_id: "second" });
+
+        track("copy");
+        flush();
+
+        expect(payloads()[0].trace_id).toBe("first");
+    });
+});
+
+describe("track", () => {
+    it("does not throw before init", () => {
+        expect(() => track("copy")).not.toThrow();
+        expect(sent).toHaveLength(0);
+    });
+
+    it("sends the event with the page context", () => {
+        init({ ...config, trace_id: "trace-1" });
+
+        track("copy", { field: "countryCode" });
+        flush();
+
+        const entry = payloads()[0];
+
+        expect(entry.kind).toBe("event");
+        expect(entry.name).toBe("copy");
+        expect(entry.props).toEqual({ field: "countryCode" });
+        expect(entry.trace_id).toBe("trace-1");
+        expect(entry.url).toBe(location.href);
+        expect(entry.page_id).toEqual(expect.any(String));
+    });
+
+    it("drops a kind the server does not collect", () => {
+        init({ endpoint: "/_observability", collect: ["error"] });
+
+        track("copy");
+        flush();
+
+        expect(sent).toHaveLength(0);
+    });
+
+    it("batches until flushed", () => {
+        init(config);
+
+        track("copy");
+        track("copy");
+
+        expect(sent).toHaveLength(0);
+
+        flush();
+
+        expect(sent).toHaveLength(1);
+        expect(payloads()).toHaveLength(2);
+    });
+});
+
+describe("transport", () => {
+    it("falls back to fetch when the beacon is refused", () => {
+        beaconOk = false;
+        init(config);
+
+        track("copy");
+        flush();
+
+        expect(fetch).toHaveBeenCalledOnce();
+        expect(payloads()[0].name).toBe("copy");
+    });
+
+    it("survives a transport that throws", () => {
+        (navigator as any).sendBeacon = () => {
+            throw new Error("nope");
+        };
+        init(config);
+
+        track("copy");
+
+        expect(() => flush()).not.toThrow();
+    });
+
+    it("flushes on pagehide", () => {
+        init(config);
+
+        track("copy");
+        dispatchEvent(new Event("pagehide"));
+
+        expect(payloads()).toHaveLength(1);
+    });
+});
+
+describe("errors", () => {
+    it("reports an unhandled error immediately", () => {
+        init(config);
+
+        dispatchEvent(
+            Object.assign(new Event("error"), {
+                message: "boom",
+                filename: "app.js",
+                lineno: 4,
+                colno: 2,
+                error: Object.assign(new TypeError("boom"), { stack: "at foo" }),
+            })
+        );
+
+        const entry = payloads()[0];
+
+        expect(entry.kind).toBe("error");
+        expect(entry.message).toBe("boom");
+        expect(entry.type).toBe("TypeError");
+        expect(entry.line).toBe(4);
+        expect(entry.handled).toBe(false);
+    });
+
+    it("reports one you caught yourself as handled", () => {
+        init(config);
+
+        captureError(new RangeError("out of range"));
+
+        const entry = payloads()[0];
+
+        expect(entry.type).toBe("RangeError");
+        expect(entry.handled).toBe(true);
+    });
+});
+
+describe("pageviews", () => {
+    it("reports the first as a load and the next as spa", () => {
+        init(withPageviews);
+
+        pageview("/second");
+        flush();
+
+        const entries = payloads();
+
+        expect(entries[0].nav_type).toBe("load");
+        expect(entries[1].nav_type).toBe("spa");
+        expect(entries[1].to).toBe("/second");
+    });
+
+    it("ignores a repeat of the current url", () => {
+        init(withPageviews);
+
+        pageview("/same");
+        pageview("/same");
+        flush();
+
+        expect(payloads()).toHaveLength(2);
+    });
+
+    it("is not collected unless the server asks for it", () => {
+        init(config);
+
+        pageview("/second");
+        flush();
+
+        expect(sent).toHaveLength(0);
+    });
+
+    it("skips everything when sampled out", () => {
+        vi.spyOn(Math, "random").mockReturnValue(0.99);
+        init({ ...withPageviews, sample: 0.5 });
+
+        pageview("/second");
+        flush();
+
+        expect(sent).toHaveLength(0);
+    });
+});
+
+describe("setTraceId", () => {
+    it("retags subsequent entries", () => {
+        init({ ...config, trace_id: "first" });
+
+        setTraceId("second");
+        track("copy");
+        flush();
+
+        expect(payloads()[0].trace_id).toBe("second");
+    });
+});
+
+describe("inlined build", () => {
+    it("exposes the api globally and inits from the injected config", async () => {
+        (window as any).__observability = { endpoint: "/_observability", collect: ["event"] };
+
+        await import("../src/auto");
+
+        (window as any).observability.track("copy");
+        (window as any).observability.flush();
+
+        expect(payloads()[0].name).toBe("copy");
+    });
+});
+
+describe("vitals", () => {
+    it("reports a metric once, however often the observer delivers it", async () => {
+        const callbacks: ((list: any) => void)[] = [];
+
+        vi.stubGlobal(
+            "PerformanceObserver",
+            class {
+                constructor(cb: (list: any) => void) {
+                    callbacks.push(cb);
+                }
+                observe() {}
+            }
+        );
+
+        const { init: freshInit, flush: freshFlush } = await import("../src/core");
+        freshInit({ endpoint: "/_observability", collect: ["vital"] });
+
+        // A buffered observer replays what it already delivered.
+        const entry = { name: "first-contentful-paint", startTime: 1200 };
+        for (const cb of callbacks) cb({ getEntries: () => [entry] });
+        for (const cb of callbacks) cb({ getEntries: () => [entry] });
+
+        freshFlush();
+
+        expect(payloads().filter((e) => e.name === "FCP")).toHaveLength(1);
+    });
+});

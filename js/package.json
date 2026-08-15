@@ -1,0 +1,60 @@
+{
+    "name": "@devtime-ltd/observability-client",
+    "version": "0.1.0",
+    "description": "Browser telemetry for devtime-ltd/laravel-observability-log: JS errors, Core Web Vitals, custom events and SPA pageviews.",
+    "license": "MIT",
+    "author": "Alun Davey",
+    "repository": {
+        "type": "git",
+        "url": "git+https://github.com/devtime-ltd/laravel-observability-log.git",
+        "directory": "js"
+    },
+    "type": "module",
+    "main": "dist/index.js",
+    "module": "dist/index.js",
+    "types": "dist/index.d.ts",
+    "exports": {
+        ".": {
+            "types": "./dist/index.d.ts",
+            "import": "./dist/index.js"
+        },
+        "./inertia": {
+            "types": "./dist/inertia.d.ts",
+            "import": "./dist/inertia.js"
+        },
+        "./react": {
+            "types": "./dist/react.d.ts",
+            "import": "./dist/react.js"
+        }
+    },
+    "files": [
+        "dist",
+        "README.md",
+        "LICENSE"
+    ],
+    "scripts": {
+        "build": "node build.mjs",
+        "check": "tsc --noEmit",
+        "test": "vitest run"
+    },
+    "devDependencies": {
+        "@types/react": "^19.0.0",
+        "esbuild": "^0.25.0",
+        "jsdom": "^26.0.0",
+        "typescript": "^5.7.0",
+        "vitest": "^3.0.0",
+        "@inertiajs/core": "^2.0.0"
+    },
+    "peerDependencies": {
+        "@inertiajs/core": ">=1.0",
+        "react": ">=18"
+    },
+    "peerDependenciesMeta": {
+        "@inertiajs/core": {
+            "optional": true
+        },
+        "react": {
+            "optional": true
+        }
+    }
+}

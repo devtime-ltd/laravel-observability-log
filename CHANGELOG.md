@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.7.0] - 2026-08-15
+
+### Added
+
+- `ClientSensor`, browser telemetry through the same log channels as every other sensor: unhandled JS errors and promise rejections (`client.error`), Core Web Vitals (`client.vital`), allowlisted custom events (`client.event`), and client-side pageviews for SPAs (`client.pageview`). Entries carry the trace ID of the request that rendered the page, so a browser error joins to its own `http.request` entry.
+- `@observability` Blade directive, inlining a ~1.3 KB (gzipped) agent and its config, and exposing `window.observability` (`track`, `pageview`, `flush`, `captureError`) so a page with no build step can emit events. Renders nothing while the sensor is off, so it is safe in a shared layout. Accepts `['nonce' => ...]` for a CSP nonce and `['trace_id' => ...]` to override the resolved trace ID.
+- `@devtime-ltd/observability-client` on npm, built from the same TypeScript source as the inlined agent, with `react` and `inertia` entry points for apps that route on the client.
+
+### Notes
+
+- `ClientSensor` is the only sensor that opens a public write endpoint, so it does not inherit the top-level `channel`: set `OBSERVABILITY_LOG_CLIENT_CHANNEL` to switch it on. The route exists only while it is on, so run `php artisan route:clear` after enabling it on an app that caches routes.
+- Event names are allowlisted (`client.events`, empty by default) and the endpoint caps the body before decoding it, caps the batch before walking it, throttles per IP, and always answers `204`.
+- Pageviews are off by default: a server-rendered page already logs an `http.request`.
+
 ## [0.6.0] - 2026-05-15
 
 ### Breaking

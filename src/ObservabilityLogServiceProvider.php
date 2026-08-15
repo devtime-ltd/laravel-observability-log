@@ -19,6 +19,7 @@ use Illuminate\Queue\Events\JobFailed;
 use Illuminate\Queue\Events\JobProcessed;
 use Illuminate\Queue\Events\JobProcessing;
 use Illuminate\Queue\Events\JobQueued;
+use Illuminate\Support\Facades\Blade;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\ServiceProvider;
@@ -43,6 +44,8 @@ class ObservabilityLogServiceProvider extends ServiceProvider
         $this->publishes([
             __DIR__.'/../config/observability-log.php' => config_path('observability-log.php'),
         ], 'observability-log');
+
+        $this->registerClientSensor();
 
         $this->app->afterResolving(ExceptionHandler::class, function ($handler) {
             if (method_exists($handler, 'reportable')) {
@@ -72,6 +75,25 @@ class ObservabilityLogServiceProvider extends ServiceProvider
         Event::listen(ConnectionFailed::class, [OutgoingHttpSensor::class, 'recordConnectionFailed']);
 
         $this->registerSharedQueryListener();
+    }
+
+    /**
+     * The directive is always available so a view that uses it does not
+     * render a raw @observability when the sensor is off; the route only
+     * exists while it is on, which is why enabling it needs a route:clear
+     * on an app that caches routes.
+     */
+    private function registerClientSensor(): void
+    {
+        Blade::directive('observability', function (string $expression) {
+            $expression = trim($expression);
+
+            return "<?php echo \DevtimeLtd\LaravelObservabilityLog\ClientScript::render(".($expression === '' ? '[]' : $expression).'); ?>';
+        });
+
+        if (ClientSensor::enabled()) {
+            $this->loadRoutesFrom(__DIR__.'/../routes/client.php');
+        }
     }
 
     private function registerSharedQueryListener(): void
