@@ -1,4 +1,4 @@
-import { Component, useEffect, type ErrorInfo, type ReactNode } from "react";
+import { Component, useMemo, type ErrorInfo, type ReactNode } from "react";
 
 import { captureError, init, pageview, track, type Config } from "./core";
 
@@ -10,11 +10,10 @@ export function ObservabilityProvider({
     config: Config;
     children?: ReactNode;
 }) {
-    useEffect(() => {
-        init(config);
-        // init is idempotent, so a changed config object cannot restart it.
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, []);
+    // During render rather than in an effect: an effect runs after the
+    // children have mounted, so a child that throws on its first render
+    // would report before the agent existed. init is idempotent.
+    useMemo(() => init(config), []);
 
     return <>{children}</>;
 }

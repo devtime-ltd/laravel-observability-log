@@ -282,6 +282,8 @@ describe("vitals", () => {
 });
 
 /** Captures each PerformanceObserver callback by the entry type it observes. */
+const queues: Record<string, any> = {};
+
 function observeVitals(): Record<string, (entries: any[]) => void> {
     const byType: Record<string, (entries: any[]) => void> = {};
 
@@ -289,11 +291,18 @@ function observeVitals(): Record<string, (entries: any[]) => void> {
         "PerformanceObserver",
         class {
             cb: (list: any) => void;
+            queued: any[] = [];
             constructor(cb: (list: any) => void) {
                 this.cb = cb;
             }
             observe(options: { type: string }) {
                 byType[options.type] = (entries) => this.cb({ getEntries: () => entries });
+                queues[options.type] = this;
+            }
+            takeRecords() {
+                const held = this.queued;
+                this.queued = [];
+                return held;
             }
         }
     );
@@ -394,6 +403,37 @@ describe("batching", () => {
         freshTrack("copy", { circular });
 
         expect(() => freshFlush()).not.toThrow();
+        expect(sent).toHaveLength(0);
+    });
+});
+
+
+describe("observer draining", () => {
+    it("collects an entry still queued when the page hides", async () => {
+        const observers = observeVitals();
+        const { init: freshInit } = await import("../src/core");
+        freshInit({ endpoint: "/_observability", collect: ["vital"] });
+
+        observers["largest-contentful-paint"]([{ startTime: 1000 }]);
+        // A later paint the observer has not delivered yet.
+        queues["largest-contentful-paint"].queued = [{ startTime: 2400 }];
+
+        dispatchEvent(new Event("pagehide"));
+
+        expect(payloads().find((e) => e.name === "LCP").value).toBe(2400);
+    });
+});
+
+describe("payload sizing", () => {
+    it("measures utf-8 bytes, not utf-16 code units", async () => {
+        const { init: freshInit, track: freshTrack, flush: freshFlush } = await import("../src/core");
+        // Each emoji is 2 code units but 4 bytes, so a length-based check
+        // would think this batch fits.
+        freshInit({ endpoint: "/_observability", collect: ["event"], max_bytes: 220 });
+
+        freshTrack("copy", { note: "🎈".repeat(40) });
+        freshFlush();
+
         expect(sent).toHaveLength(0);
     });
 });
