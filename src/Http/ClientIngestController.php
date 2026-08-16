@@ -34,9 +34,9 @@ class ClientIngestController
             return $accepted;
         }
 
-        $body = $request->getContent();
+        $body = self::read($request, $max);
 
-        if (! is_string($body) || strlen($body) > $max) {
+        if ($body === null) {
             return $accepted;
         }
 
@@ -47,6 +47,26 @@ class ClientIngestController
         }
 
         return $accepted;
+    }
+
+    /**
+     * Reads at most one byte past the cap, so a body sent without a usable
+     * Content-Length (chunked, say) cannot make the endpoint allocate an
+     * arbitrary amount before the cap is applied.
+     */
+    private static function read(Request $request, int $max): ?string
+    {
+        $stream = $request->getContent(true);
+
+        if (! is_resource($stream)) {
+            $body = $request->getContent();
+
+            return is_string($body) && strlen($body) <= $max ? $body : null;
+        }
+
+        $body = stream_get_contents($stream, $max + 1);
+
+        return is_string($body) && strlen($body) <= $max ? $body : null;
     }
 
     /** @return list<mixed> */

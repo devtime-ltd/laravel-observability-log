@@ -72,9 +72,13 @@ function send(entries: Entry[]): void {
         return;
     }
 
+    // The server caps UTF-8 bytes; String.length counts UTF-16 code units, so
+    // one emoji would slip past here and be rejected there.
+    const blob = typeof Blob === "function" ? new Blob([body], { type: "application/json" }) : null;
+    const size = blob ? blob.size : body.length;
     const cap = config?.max_bytes ?? 0;
 
-    if (cap && body.length > cap) {
+    if (cap && size > cap) {
         if (entries.length < 2) return;
 
         const half = Math.ceil(entries.length / 2);
@@ -84,13 +88,12 @@ function send(entries: Entry[]): void {
         return;
     }
 
-    transmit(body);
+    transmit(body, blob);
 }
 
-function transmit(body: string): void {
+function transmit(body: string, blob: Blob | null): void {
     try {
-        if (navigator.sendBeacon) {
-            const blob = new Blob([body], { type: "application/json" });
+        if (navigator.sendBeacon && blob) {
             if (navigator.sendBeacon(config!.endpoint, blob)) return;
         }
 
@@ -187,15 +190,31 @@ function vital(name: string, value: number): void {
     });
 }
 
+let pending: { observer: PerformanceObserver; cb: (entries: any[]) => void }[] = [];
+
 function observe(type: string, cb: (entries: any[]) => void, extra?: Record<string, unknown>): void {
     try {
-        new PerformanceObserver((list) => cb(list.getEntries())).observe({
-            type,
-            buffered: true,
-            ...extra,
-        });
+        const observer = new PerformanceObserver((list) => cb(list.getEntries()));
+
+        observer.observe({ type, buffered: true, ...extra });
+        pending.push({ observer, cb });
     } catch {
         // Unsupported entry type. The others still report.
+    }
+}
+
+/**
+ * An entry recorded just before the page hides can still be sitting in its
+ * observer's queue, and that callback would arrive after the metrics were
+ * final. Drain each one first.
+ */
+function drainObservers(): void {
+    for (const { observer, cb } of pending) {
+        try {
+            if (typeof observer.takeRecords === "function") cb(observer.takeRecords());
+        } catch {
+            // Nothing to drain.
+        }
     }
 }
 
@@ -274,6 +293,9 @@ function onHidden(fn: () => void): void {
 function runHidden(): void {
     const handlers = hiddenHandlers;
     hiddenHandlers = [];
+
+    drainObservers();
+
     for (const fn of handlers) fn();
     flush();
 }
@@ -301,6 +323,7 @@ export function reset(): void {
     config = null;
     queue = [];
     reported = {};
+    pending = [];
     hiddenHandlers = [];
     lastUrl = "";
 }
