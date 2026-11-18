@@ -561,3 +561,23 @@ describe('error handling', function () {
         })->call($instance))->toBe([]);
     });
 });
+
+describe('client ids', function () {
+    it('are emitted from Context when set', function () {
+        config(['observability-log.outgoing_http.channel' => 'test']);
+        Context::add('client_instance_id', 'the-instance');
+        Context::add('visit_id', 'the-visit');
+
+        $channel = Mockery::mock();
+        $channel->shouldReceive('log')
+            ->once()
+            ->withArgs(fn ($level, $message, $context) => ($context['client_instance_id'] ?? null) === 'the-instance'
+                && ($context['visit_id'] ?? null) === 'the-visit'
+                && ! array_key_exists('client_id', $context));
+        Log::shouldReceive('channel')->with('test')->andReturn($channel);
+
+        $request = clientRequest('GET', 'https://api.example.com/users');
+        OutgoingHttpSensor::recordSending(new RequestSending($request));
+        OutgoingHttpSensor::recordReceived(new ResponseReceived($request, clientResponse(200)));
+    });
+});

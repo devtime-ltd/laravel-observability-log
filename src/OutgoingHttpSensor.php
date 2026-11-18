@@ -220,6 +220,8 @@ class OutgoingHttpSensor
             $entry['trace_id'] = $traceId;
         }
 
+        $entry = [...$entry, ...RequestContext::clientIds(null)];
+
         return array_merge($entry, $measurements);
     }
 
@@ -244,6 +246,8 @@ class OutgoingHttpSensor
         if ($traceId !== null) {
             $entry['trace_id'] = $traceId;
         }
+
+        $entry = [...$entry, ...RequestContext::clientIds(null)];
 
         return array_merge($entry, $measurements);
     }

@@ -3,6 +3,7 @@
 namespace DevtimeLtd\LaravelObservabilityLog;
 
 use DevtimeLtd\LaravelObservabilityLog\Support\RequestContext;
+use Illuminate\Support\Str;
 use Throwable;
 
 /**
@@ -17,6 +18,19 @@ class ClientScript
     /**
      * @param  array<string, mixed>  $options  nonce: CSP nonce for the script tag.
      *                                         trace_id: override the resolved trace id.
+     *                                         client_id: false to keep no id in the
+     *                                         browser's storage and remove any kept
+     *                                         there, or the app's own.
+     *                                         client_instance_id, visit_id: override
+     *                                         the ids minted for this page.
+     *                                         cacheable: the response may be replayed
+     *                                         to other browsers, so nothing of this
+     *                                         request's is written into it.
+     *                                         inertia: true to follow Inertia visits, or
+     *                                         ['trace_id' => the page prop holding each
+     *                                         visit's trace id].
+     *                                         release: the build being served.
+     *                                         view: what the page shows, such as a route name.
      */
     public static function render(array $options = []): string
     {
@@ -52,7 +66,9 @@ class ClientScript
      */
     private static function config(array $options): array
     {
-        $traceId = $options['trace_id'] ?? RequestContext::traceId(request());
+        $traceId = ($options['cacheable'] ?? false)
+            ? null
+            : $options['trace_id'] ?? RequestContext::traceId(request());
 
         $path = ltrim((string) config('observability-log.client.path', '_observability'), '/');
 
@@ -65,7 +81,74 @@ class ClientScript
             'sample' => self::sampleRate(),
             'max_bytes' => (int) config('observability-log.client.max_body_bytes', 8192),
             'trace_id' => is_string($traceId) ? $traceId : null,
+            ...self::ids($options),
+            'headers' => RequestContext::clientIdHeaders(),
+            'inertia' => self::inertia($options['inertia'] ?? null),
+            'release' => self::text($options['release'] ?? config('observability-log.client.release')),
+            'view' => self::text($options['view'] ?? null),
         ];
+    }
+
+    /**
+     * The instance and its first visit are minted here rather than in the
+     * browser so that the request rendering the page carries them too, not
+     * only the requests the page goes on to make. A cacheable page gets
+     * none of the three, and the browser mints its own. The client id is
+     * only ever the browser's, unless the app supplies one.
+     *
+     * @param  array<string, mixed>  $options
+     * @return array<string, string|false|null>
+     */
+    private static function ids(array $options): array
+    {
+        $ids = [];
+        $enabled = RequestContext::enabledClientIds();
+        $clientId = $options['client_id'] ?? null;
+
+        $cacheable = (bool) ($options['cacheable'] ?? false);
+
+        if ($clientId === false || ! in_array('client_id', $enabled, true)) {
+            $ids['client_id'] = false;
+        } elseif (! $cacheable && RequestContext::validClientId($clientId) !== null) {
+            $ids['client_id'] = $clientId;
+        }
+
+        if ($cacheable) {
+            return $ids;
+        }
+
+        try {
+            $known = RequestContext::clientIds(request());
+
+            foreach (array_intersect(['client_instance_id', 'visit_id'], $enabled) as $name) {
+                $ids[$name] = RequestContext::validClientId($options[$name] ?? null)
+                    ?? $known[$name]
+                    ?? (string) Str::uuid();
+            }
+        } catch (Throwable) {
+            return $ids;
+        }
+
+        RequestContext::shareClientIds(null, array_filter($ids, 'is_string'));
+
+        return $ids;
+    }
+
+    /** @return bool|array{trace_id: string} */
+    private static function inertia(mixed $option): bool|array
+    {
+        if (! is_array($option)) {
+            return $option === true;
+        }
+
+        $prop = self::text($option['trace_id'] ?? null);
+
+        return $prop === null ? true : ['trace_id' => $prop];
+    }
+
+    private static function text(mixed $value): ?string
+    {
+        return is_string($value) && $value !== '' ? $value : null;
     }
 
     private static function sampleRate(): float

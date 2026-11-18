@@ -188,6 +188,8 @@ class ExceptionSensor
             $entry['trace_id'] = $traceId;
         }
 
+        $entry = [...$entry, ...RequestContext::clientIds($request)];
+
         return $entry;
     }
 

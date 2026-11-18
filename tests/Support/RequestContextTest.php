@@ -289,3 +289,113 @@ describe('header value cap', function () {
         expect($headers['x-multi'])->toBe(['fir', 'sec', 'thi']);
     });
 });
+
+describe('clientIds()', function () {
+    it('reads each id from its configured header', function () {
+        $request = Request::create('/', 'GET', [], [], [], [
+            'HTTP_X_CLIENT_ID' => 'the-browser',
+            'HTTP_X_CLIENT_INSTANCE_ID' => 'the-instance',
+            'HTTP_X_VISIT_ID' => '0b8f3c52-7a1d-4e69-9c2b-5d1f6a7e8b90',
+        ]);
+
+        expect(RequestContext::clientIds($request))->toBe([
+            'client_id' => 'the-browser',
+            'client_instance_id' => 'the-instance',
+            'visit_id' => '0b8f3c52-7a1d-4e69-9c2b-5d1f6a7e8b90',
+        ]);
+    });
+
+    it('leaves out an id the request did not send', function () {
+        $request = Request::create('/', 'GET', [], [], [], ['HTTP_X_VISIT_ID' => 'the-visit']);
+
+        expect(RequestContext::clientIds($request))->toBe(['visit_id' => 'the-visit']);
+    });
+
+    it('drops a header that is not a short plain token', function (string $value) {
+        $request = Request::create('/', 'GET', [], [], [], [
+            'HTTP_X_CLIENT_ID' => $value,
+            'HTTP_X_CLIENT_INSTANCE_ID' => $value,
+            'HTTP_X_VISIT_ID' => $value,
+        ]);
+
+        expect(RequestContext::clientIds($request))->toBe([]);
+    })->with([
+        'markup' => '<script>alert(1)</script>',
+        'spaces' => 'two words',
+        'too long' => str_repeat('a', 65),
+    ]);
+
+    it('falls back to Context', function () {
+        Context::add('client_instance_id', 'from-context');
+
+        expect(RequestContext::clientIds(null))->toBe(['client_instance_id' => 'from-context']);
+    });
+
+    it('uses a configured callable', function () {
+        config(['observability-log.visit_id' => fn () => 'from-callable']);
+
+        expect(RequestContext::clientIds(null))->toBe(['visit_id' => 'from-callable']);
+    });
+
+    it('switches an id off altogether when it is set to null', function () {
+        config(['observability-log.client_id' => null]);
+        Context::add('client_id', 'left-on-context');
+
+        $request = Request::create('/', 'GET', [], [], [], [
+            'HTTP_X_CLIENT_ID' => 'the-browser',
+            'HTTP_X_VISIT_ID' => 'the-visit',
+        ]);
+
+        expect(RequestContext::clientIds($request))->toBe(['visit_id' => 'the-visit'])
+            ->and(RequestContext::enabledClientIds())->toBe(['client_instance_id', 'visit_id']);
+    });
+});
+
+describe('shareClientIds()', function () {
+    it('puts the ids of the request on Context', function () {
+        $request = Request::create('/', 'GET', [], [], [], ['HTTP_X_VISIT_ID' => 'the-visit']);
+
+        expect(RequestContext::shareClientIds($request))->toBe(['visit_id' => 'the-visit'])
+            ->and(Context::get('visit_id'))->toBe('the-visit')
+            ->and(Context::has('client_id'))->toBeFalse();
+    });
+
+    it('shares the ids it is handed in place of the request\'s', function () {
+        $request = Request::create('/', 'GET', [], [], [], ['HTTP_X_VISIT_ID' => 'the-visit']);
+
+        RequestContext::shareClientIds($request, ['client_instance_id' => 'minted']);
+
+        expect(Context::get('client_instance_id'))->toBe('minted')
+            ->and(Context::has('visit_id'))->toBeFalse();
+    });
+
+    it('shares nothing for an id that is switched off', function () {
+        config(['observability-log.visit_id' => null]);
+
+        expect(RequestContext::shareClientIds(null, ['client_instance_id' => 'minted', 'visit_id' => 'minted']))
+            ->toBe(['client_instance_id' => 'minted'])
+            ->and(Context::has('visit_id'))->toBeFalse();
+    });
+});
+
+describe('clientIdHeaders()', function () {
+    it('names the first header configured for each id', function () {
+        config(['observability-log.visit_id' => ['X-Navigation', 'X-Visit-Id']]);
+
+        expect(RequestContext::clientIdHeaders())->toBe([
+            'client_id' => 'X-Client-Id',
+            'client_instance_id' => 'X-Client-Instance-Id',
+            'visit_id' => 'X-Navigation',
+        ]);
+    });
+
+    it('names none for an id that comes from a callable or is switched off', function (mixed $config) {
+        config(['observability-log.client_id' => $config]);
+
+        expect(RequestContext::clientIdHeaders()['client_id'])->toBeNull();
+    })->with([
+        'callable' => [[RequestContext::class, 'clientIdHeaders']],
+        'null' => [null],
+        'empty' => [[]],
+    ]);
+});

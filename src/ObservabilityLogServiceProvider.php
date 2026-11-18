@@ -2,6 +2,7 @@
 
 namespace DevtimeLtd\LaravelObservabilityLog;
 
+use DevtimeLtd\LaravelObservabilityLog\Support\RequestContext;
 use Illuminate\Console\Events\CommandFinished;
 use Illuminate\Console\Events\CommandStarting;
 use Illuminate\Console\Events\ScheduledBackgroundTaskFinished;
@@ -19,7 +20,9 @@ use Illuminate\Queue\Events\JobFailed;
 use Illuminate\Queue\Events\JobProcessed;
 use Illuminate\Queue\Events\JobProcessing;
 use Illuminate\Queue\Events\JobQueued;
+use Illuminate\Queue\Events\Looping;
 use Illuminate\Support\Facades\Blade;
+use Illuminate\Support\Facades\Context;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\ServiceProvider;
@@ -60,6 +63,16 @@ class ObservabilityLogServiceProvider extends ServiceProvider
         Event::listen(JobProcessed::class, [JobSensor::class, 'recordProcessed']);
         Event::listen(JobExceptionOccurred::class, [JobSensor::class, 'recordExceptionOccurred']);
         Event::listen(JobFailed::class, [JobSensor::class, 'recordFailed']);
+
+        // A worker keeps the last job's Context until it picks up the next,
+        // so anything dispatched from a looping callback would inherit that
+        // job's client ids. Void, because a looping listener's return value
+        // can pause the worker.
+        Event::listen(Looping::class, static function (): void {
+            foreach (RequestContext::CLIENT_IDS as $name) {
+                Context::forget($name);
+            }
+        });
 
         Event::listen(CommandStarting::class, [CommandSensor::class, 'recordStarting']);
         Event::listen(CommandFinished::class, [CommandSensor::class, 'recordFinished']);

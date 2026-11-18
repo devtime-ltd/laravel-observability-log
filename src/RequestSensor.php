@@ -79,6 +79,8 @@ class RequestSensor
 
     public function handle(Request $request, Closure $next): Response
     {
+        RequestContext::shareClientIds($request);
+
         if (self::normaliseChannels(self::sensorConfig('channel')) === []) {
             return $next($request);
         }
@@ -225,6 +227,8 @@ class RequestSensor
         if ($traceId !== null) {
             $entry['trace_id'] = $traceId;
         }
+
+        $entry = [...$entry, ...RequestContext::clientIds($request)];
 
         return array_merge($entry, $measurements);
     }

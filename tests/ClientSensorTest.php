@@ -2,6 +2,7 @@
 
 use DevtimeLtd\LaravelObservabilityLog\ClientSensor;
 use DevtimeLtd\LaravelObservabilityLog\ObfuscateIp;
+use DevtimeLtd\LaravelObservabilityLog\Support\RequestContext;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
 
@@ -64,7 +65,9 @@ describe('client logging', function () {
             'url' => 'https://example.test/pricing?plan=pro',
             'referrer' => 'https://example.test/',
             'viewport' => ['w' => 1280, 'h' => 800],
-            'page_id' => 'abc123',
+            'client_id' => 'the-browser',
+            'client_instance_id' => 'the-instance',
+            'visit_id' => 'the-visit',
             'trace_id' => 'trace-from-the-page',
         ]);
 
@@ -78,9 +81,51 @@ describe('client logging', function () {
             ->and($entry['context']['host'])->toBe('example.test')
             ->and($entry['context']['path'])->toBe('/pricing')
             ->and($entry['context']['viewport'])->toBe('1280x800')
-            ->and($entry['context']['page_id'])->toBe('abc123')
+            ->and($entry['context']['client_id'])->toBe('the-browser')
+            ->and($entry['context']['client_instance_id'])->toBe('the-instance')
+            ->and($entry['context']['visit_id'])->toBe('the-visit')
             ->and($entry['context']['user_agent'])->toBe('Mozilla/5.0')
             ->and($entry['context']['ip'])->toBe('203.0.113.9');
+    });
+
+    it('logs the build and the view the page reported', function () {
+        $entry = recordClient([
+            'kind' => 'error',
+            'message' => 'boom',
+            'release' => 'a1b2c3d',
+            'view' => 'Users/Index',
+        ]);
+
+        expect($entry['context']['release'])->toBe('a1b2c3d')
+            ->and($entry['context']['view'])->toBe('Users/Index');
+    });
+
+    it('caps the build and the view', function () {
+        $entry = recordClient([
+            'kind' => 'error',
+            'message' => 'boom',
+            'release' => str_repeat('r', 200),
+            'view' => str_repeat('v', 200),
+        ]);
+
+        expect(strlen($entry['context']['release']))->toBe(64)
+            ->and(strlen($entry['context']['view']))->toBe(120);
+    });
+
+    it('drops an id that is not a short plain token', function (string $name) {
+        $entry = recordClient(['kind' => 'error', 'message' => 'boom', $name => '<b>abc</b>']);
+
+        expect($entry['context'])->toHaveKey($name)
+            ->and($entry['context'][$name])->toBeNull();
+    })->with(RequestContext::CLIENT_IDS);
+
+    it('logs nothing for an id that is switched off, whatever the browser sent', function () {
+        config(['observability-log.client_id' => null]);
+
+        $entry = recordClient(['kind' => 'error', 'message' => 'boom', 'client_id' => 'the-browser', 'visit_id' => 'the-visit']);
+
+        expect($entry['context']['client_id'])->toBeNull()
+            ->and($entry['context']['visit_id'])->toBe('the-visit');
     });
 
     it('prefers the trace id of the page over the beacon request', function () {

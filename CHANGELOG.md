@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.8.0] - Unreleased
+
+### Breaking
+
+- `page_id` on `client.*` entries is now `client_instance_id`, and holds a version 4 UUID. It names the same thing: one running copy of a page. Update any query or dashboard that reads `page_id`.
+
+### Added
+
+- Client IDs: three ids from the browser above the per-request `trace_id`, on the browser's `client.*` entries and on every server entry behind them. `client_id` is one browser, kept in `localStorage`; `client_instance_id` is one running copy of a page; `visit_id` is one navigation within it. `@observabilityClient` mints the instance and its first visit and adds them to `Context` (or leaves them to the browser with `['cacheable' => true]`, for pages served from a cache), the agent sends all three in `X-Client-Id`, `X-Client-Instance-Id` and `X-Visit-Id` on same-origin `fetch` and `XMLHttpRequest`, `RequestSensor` reads them back into `Context`, and every sensor logs them. Jobs dispatched from the page carry them too. Configure with the new top-level `client_id`, `client_instance_id` and `visit_id` keys (header list or callable, like `trace_id`).
+- Inertia following in the inlined agent: `@observabilityClient(['inertia' => ['trace_id' => 'traceId']])` gives each Inertia visit its own `visit_id`, `view` and trace ID, with no npm build. A full visit's own request carries the new `visit_id`. It works from the events every Inertia release dispatches; the README lists what differs before 3.9.
+- `release` and `view` on every `client.*` entry: the build the page was served from (`client.release`, `OBSERVABILITY_LOG_CLIENT_RELEASE`, or the directive's `release` option) and what was on screen (the directive's `view` option, `setView()`, or the Inertia page component).
+- `window.observability` gains `setTraceId`, `setView`, `startVisit` and `ids`, so an app that routes on the client can keep the inlined agent pointed at the current visit without the npm build.
+- `RequestContext::clientIds()` and `RequestContext::shareClientIds()` for apps that resolve or share the ids themselves.
+
+### Notes
+
+- The agent now stores a persistent identifier, the client ID, in the browser's `localStorage` under `observability:client_id`. Where the law asks for consent before that, get it first, or switch it off with `OBSERVABILITY_LOG_CLIENT_ID=false` or `['client_id' => false]` on the directive.
+- The inlined agent now wraps `fetch` and `XMLHttpRequest` to add the headers. Set an id's top-level key to `null` to switch that id off.
+- `ClientSensor` used to log any `page_id` the browser sent, up to 64 bytes. The ids are now logged only when they are 1 to 64 characters of `A-Z a-z 0-9 _ -`, the same rule the headers are held to.
+- The inlined agent grows from about 1.6 KB to about 3 KB gzipped.
+- `observeInertia()` listens for the events Inertia dispatches on the document where it used `router.on`, and now starts visits as well as following the trace ID and view. Its signature is unchanged.
+
 ## [0.7.0] - 2026-08-15
 
 ### Breaking

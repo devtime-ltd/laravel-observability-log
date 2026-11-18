@@ -7,9 +7,13 @@ use DevtimeLtd\LaravelObservabilityLog\ExceptionSensor;
 use DevtimeLtd\LaravelObservabilityLog\JobSensor;
 use DevtimeLtd\LaravelObservabilityLog\ObfuscateIp;
 use DevtimeLtd\LaravelObservabilityLog\RequestSensor;
+use DevtimeLtd\LaravelObservabilityLog\Support\RequestContext;
 use DevtimeLtd\LaravelObservabilityLog\Tests\Fixtures\IntegrationTestJob;
 use Illuminate\Contracts\Debug\ExceptionHandler;
 use Illuminate\Queue\Events\JobQueued;
+use Illuminate\Queue\Events\Looping;
+use Illuminate\Support\Arr;
+use Illuminate\Support\Facades\Blade;
 use Illuminate\Support\Facades\Context;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Event;
@@ -332,6 +336,97 @@ class IntegrationTest extends TestCase
         $this->assertNull($this->recordWithMessage('error.exception'));
     }
 
+    private const UUID_V4 = '/\A[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\z/';
+
+    private const CLIENT_ID_HEADERS = [
+        'X-Client-Id' => 'the-browser',
+        'X-Client-Instance-Id' => 'the-instance',
+        'X-Visit-Id' => 'the-visit',
+    ];
+
+    private const CLIENT_IDS = [
+        'client_id' => 'the-browser',
+        'client_instance_id' => 'the-instance',
+        'visit_id' => 'the-visit',
+    ];
+
+    public function test_client_ids_from_request_headers(): void
+    {
+        $this->get('/hello', self::CLIENT_ID_HEADERS)->assertOk();
+
+        $this->assertSame(self::CLIENT_IDS, Arr::only($this->loggedEntry(), RequestContext::CLIENT_IDS));
+        $this->assertSame(self::CLIENT_IDS, Context::only(RequestContext::CLIENT_IDS));
+    }
+
+    public function test_client_ids_are_omitted_without_the_headers(): void
+    {
+        $this->get('/hello')->assertOk();
+
+        $this->assertSame([], Arr::only($this->loggedEntry(), RequestContext::CLIENT_IDS));
+        $this->assertSame([], Context::only(RequestContext::CLIENT_IDS));
+    }
+
+    public function test_client_id_that_is_not_a_plain_token_is_ignored(): void
+    {
+        $this->get('/hello', [...self::CLIENT_ID_HEADERS, 'X-Visit-Id' => 'not a token'])->assertOk();
+
+        $this->assertSame(
+            ['client_id' => 'the-browser', 'client_instance_id' => 'the-instance'],
+            Arr::only($this->loggedEntry(), RequestContext::CLIENT_IDS)
+        );
+        $this->assertFalse(Context::has('visit_id'));
+    }
+
+    public function test_page_rendering_the_agent_logs_the_ids_it_handed_out(): void
+    {
+        config(['observability-log.client.channel' => 'test-channel']);
+
+        $this->app['router']->middleware(RequestSensor::class)->get('/page', fn () => Blade::render('@observabilityClient'));
+
+        $html = $this->get('/page')->assertOk()->getContent();
+
+        $entry = $this->loggedEntry();
+
+        $this->assertMatchesRegularExpression(self::UUID_V4, $entry['client_instance_id']);
+        $this->assertMatchesRegularExpression(self::UUID_V4, $entry['visit_id']);
+        $this->assertArrayNotHasKey('client_id', $entry);
+        $this->assertStringContainsString('"client_instance_id":"'.$entry['client_instance_id'].'"', $html);
+        $this->assertStringContainsString('"visit_id":"'.$entry['visit_id'].'"', $html);
+    }
+
+    public function test_request_and_job_share_client_ids(): void
+    {
+        $this->app['router']->middleware(RequestSensor::class)->get('/dispatch-job', function () {
+            Queue::push(new IntegrationTestJob);
+
+            return response()->json(['ok' => true]);
+        });
+
+        $this->get('/dispatch-job', self::CLIENT_ID_HEADERS)->assertOk();
+
+        foreach (['http.request', 'job.attempt'] as $message) {
+            $this->assertSame(
+                self::CLIENT_IDS,
+                Arr::only($this->recordWithMessage($message)->context, RequestContext::CLIENT_IDS),
+                $message
+            );
+        }
+    }
+
+    public function test_worker_drops_the_last_jobs_client_ids_before_its_looping_callbacks_run(): void
+    {
+        Context::add(self::CLIENT_IDS);
+        Context::add('trace_id', 'kept');
+
+        $seen = 'not called';
+        Event::listen(Looping::class, function () use (&$seen) {
+            $seen = Context::all();
+        });
+
+        $this->assertNull(Event::until(new Looping('sync', 'default')));
+        $this->assertSame(['trace_id' => 'kept'], $seen);
+    }
+
     public function test_error_route_produces_both_request_and_exception_records_sharing_trace_id(): void
     {
         $this->get('/error', ['X-Request-Id' => 'shared-42'])->assertStatus(500);
@@ -343,6 +438,19 @@ class IntegrationTest extends TestCase
         $this->assertNotNull($exceptionRecord);
         $this->assertSame('shared-42', $requestRecord->context['trace_id']);
         $this->assertSame('shared-42', $exceptionRecord->context['trace_id']);
+    }
+
+    public function test_error_route_produces_both_request_and_exception_records_sharing_client_ids(): void
+    {
+        $this->get('/error', self::CLIENT_ID_HEADERS)->assertStatus(500);
+
+        foreach (['http.request', 'error.exception'] as $message) {
+            $this->assertSame(
+                self::CLIENT_IDS,
+                Arr::only($this->recordWithMessage($message)->context, RequestContext::CLIENT_IDS),
+                $message
+            );
+        }
     }
 
     public function test_trace_args_config_produces_structured_trace(): void

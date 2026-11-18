@@ -117,6 +117,7 @@ return [
 | `db_slow_queries`    | Queries exceeding the slow query threshold                           |
 | `headers`            | Full header map when capture is enabled (see [Header capture](#header-capture)) |
 | `trace_id`           | Correlation id when resolvable (see [Trace ID](#trace-id))           |
+| `client_id`, `client_instance_id`, `visit_id` | The browser, page instance and visit behind the entry, when resolvable (see [Client IDs](#client-ids)) |
 
 ### Options
 
@@ -230,6 +231,7 @@ RequestSensor::message(fn ($request, $response) => $request->is('api/*') ? 'api.
 | `command`   | CLI command name, when running in console                        |
 | `headers`   | Full header map when header capture is enabled                   |
 | `trace_id`  | Correlation id when resolvable                                   |
+| `client_id`, `client_instance_id`, `visit_id` | The browser, page instance and visit behind the entry, when resolvable (see [Client IDs](#client-ids)) |
 
 ### Trace format
 
@@ -314,6 +316,7 @@ Registration is automatic through the service provider; no `bootstrap/app.php` c
 | `payload_size` | Serialized payload size in bytes                             |
 | `delay`        | Delay in seconds, omitted when zero or null                  |
 | `trace_id`     | Correlation id when resolvable                               |
+| `client_id`, `client_instance_id`, `visit_id` | The browser, page instance and visit behind the entry, when resolvable (see [Client IDs](#client-ids)) |
 
 #### `job.attempt`
 
@@ -333,6 +336,7 @@ Registration is automatic through the service provider; no `bootstrap/app.php` c
 | `db_slow_queries`   | Slow queries above threshold                                           |
 | `exception`         | `{class, message, file, line, code}` when the attempt failed           |
 | `trace_id`          | Correlation id when resolvable                                         |
+| `client_id`, `client_instance_id`, `visit_id` | The browser, page instance and visit behind the entry, when resolvable (see [Client IDs](#client-ids)) |
 
 ### Options
 
@@ -401,6 +405,7 @@ JobSensor::message(fn ($event) => $event instanceof JobQueued ? 'queue.dispatche
 | `db_query_total_ms` | Total query time during the command                               |
 | `db_slow_queries`   | Slow queries above threshold                                      |
 | `trace_id`          | Correlation id when resolvable                                    |
+| `client_id`, `client_instance_id`, `visit_id` | The browser, page instance and visit behind the entry, when resolvable (see [Client IDs](#client-ids)) |
 
 ### Options
 
@@ -473,6 +478,7 @@ If the background task is itself an Artisan command, [`CommandSensor`](#command-
 | `db_slow_queries`   | Slow queries above threshold                                                 |
 | `exception`         | `{class, message, file, line, code}` when the task failed                    |
 | `trace_id`          | Correlation id when resolvable                                               |
+| `client_id`, `client_instance_id`, `visit_id` | The browser, page instance and visit behind the entry, when resolvable (see [Client IDs](#client-ids)) |
 
 ### Options
 
@@ -518,6 +524,7 @@ ScheduledTaskSensor::message(fn ($event) => $event instanceof ScheduledTaskSkipp
 | `exception`     | `{class, message, file, line, code}` when the connection failed              |
 | `headers`       | Full header map when `capture_headers` is enabled (redaction applies)        |
 | `trace_id`      | Correlation id when resolvable                                               |
+| `client_id`, `client_instance_id`, `visit_id` | The browser, page instance and visit behind the entry, when resolvable (see [Client IDs](#client-ids)) |
 
 ### Options
 
@@ -603,7 +610,7 @@ OutgoingHttpSensor::message(fn ($event) => $event instanceof ConnectionFailed ? 
 
 ## Client sensor
 
-`ClientSensor` collects from the browser: unhandled JS errors, Core Web Vitals, named custom events, and client-side pageviews for SPAs. Entries carry the trace ID of the request that rendered the page, so a browser error joins to its `http.request` entry, beside that request's own `duration_ms` and `db_query_count`.
+`ClientSensor` collects from the browser: unhandled JS errors, Core Web Vitals, named custom events, and client-side pageviews for SPAs. Entries carry the trace ID of the request that rendered the page, so a browser error joins to its `http.request` entry, beside that request's own `duration_ms` and `db_query_count`. They also carry the [client IDs](#client-ids) that every request the page goes on to make carries too.
 
 It is the one sensor that opens a public write endpoint, so it does **not** inherit the top-level channel. Switch it on with its own env var:
 
@@ -621,12 +628,29 @@ Then add the agent to your layout:
 </head>
 ```
 
-The directive inlines a ~1.5 KB (gzipped) script and the config it needs. It exposes `window.observability` (`track`, `pageview`, `flush`, `captureError`) so a page with no build step can emit events:
+The directive inlines a ~3 KB (gzipped) script and the config it needs. It exposes `window.observability` (`track`, `pageview`, `flush`, `captureError`, `setTraceId`, `setView`, `startVisit`, `ids`) so a page with no build step can emit events:
 
 ```html
 <button onclick="observability.track('copy', { field: 'countryCode' })">Copy</button>
 ```
- It renders nothing while the sensor is off, so it is safe to leave in a shared layout. Pass a CSP nonce or override the trace ID with an array: `@observabilityClient(['nonce' => $nonce])`.
+It renders nothing while the sensor is off, so it is safe to leave in a shared layout. It takes an array of options:
+
+| Option | Notes |
+| --- | --- |
+| `nonce` | CSP nonce for the script tag. |
+| `trace_id` | Overrides the resolved trace ID. |
+| `client_instance_id`, `visit_id` | Override the [client IDs](#client-ids) the directive would mint. |
+| `client_id` | `false` keeps no client ID in the browser's storage and removes one kept there. A string is used as the client ID in place of a stored one. |
+| `cacheable` | `true` for a page that may be served from a cache: no ids and no trace ID are written into it, a `client_id` string passed alongside included, and the browser mints its own ids. |
+| `inertia` | `true` to follow Inertia visits, or `['trace_id' => 'traceId']` to also read each visit's trace ID from that page prop. See [Inertia](#inertia). |
+| `release` | The build being served. Overrides `client.release`. |
+| `view` | What the page shows, such as a route name. |
+
+```blade
+@observabilityClient(['nonce' => $nonce, 'view' => Route::currentRouteName()])
+```
+
+An Inertia app passes `inertia` and the agent follows its visits on its own. Any other app that routes on the client keeps the entries pointed at the right place itself: call `observability.startVisit()` when a navigation starts, and `observability.setTraceId(id)` and `observability.setView(name)` once it lands. `observability.ids()` returns the client IDs in use.
 
 ### Logged fields
 
@@ -639,7 +663,9 @@ Four messages, each fixed rather than built from anything the browser sent.
 | `client.event` | `event`, `props` |
 | `client.pageview` | `from`, `to`, `nav_type` (`load` or `spa`) |
 
-Every entry also carries `kind`, `page_id`, `trace_id`, `url`, `host`, `path`, `referrer`, `viewport`, `user_agent` and `ip`. The IP resolves and masks through the same `resolve_ip` / `obfuscate_ip` config as every other sensor.
+Every entry also carries `kind`, `client_id`, `client_instance_id`, `visit_id`, `trace_id`, `release`, `view`, `url`, `host`, `path`, `referrer`, `viewport`, `user_agent` and `ip`. The IP resolves and masks through the same `resolve_ip` / `obfuscate_ip` config as every other sensor.
+
+`release` is the build the page was served from, so a minified stack can be matched to the bundle that produced it. It is read when the page renders, not when the entry arrives, because a tab can outlive a deploy.
 
 Errors log at `failed_level`; the rest at `level`.
 
@@ -676,6 +702,7 @@ The agent emits the first pageview itself on `init()`, then one per `pageview()`
 | `middleware` | `['throttle:60,1']` | Applied to that route. |
 | `collect` | `['error', 'vital', 'event']` | Kinds accepted. |
 | `events` | `[]` | Allowlist for custom event names. |
+| `release` | `env('OBSERVABILITY_LOG_CLIENT_RELEASE')` | Build identifier logged as `release`. |
 | `sample_rate` | `1.0` | Fraction of vitals and pageviews the browser sends. Applied client-side, so a sampled-out entry costs no request. |
 | `max_body_bytes` | `8192` | Bodies over this are dropped before they are decoded. |
 | `max_entries` | `20` | Batches over this are truncated. |
@@ -703,6 +730,8 @@ track("copy", { field: "countryCode" });
 
 `captureError(error)` reports one you caught yourself. `flush()` sends the buffer early; it flushes on `visibilitychange` and `pagehide` on its own.
 
+`init()` also takes `release`, `view`, `client_id`, `client_instance_id`, `visit_id`, `headers` and `inertia`. Give it `headers: { client_id: "X-Client-Id", client_instance_id: "X-Client-Instance-Id", visit_id: "X-Visit-Id" }` to have the [client IDs](#client-ids) sent on same-origin requests. `startVisit()` begins a new visit and `currentIds()` returns the ids in use.
+
 React:
 
 ```jsx
@@ -715,7 +744,7 @@ import { ObservabilityProvider, useTrack } from "@devtime-ltd/observability-clie
 const track = useTrack();
 ```
 
-Inertia, where visits change route without a server request:
+Inertia, where visits change route without a full page load:
 
 ```js
 import { observeInertia } from "@devtime-ltd/observability-client/inertia";
@@ -723,7 +752,7 @@ import { observeInertia } from "@devtime-ltd/observability-client/inertia";
 observeInertia(config, { traceId: (page) => page.props.traceId });
 ```
 
-Router events cannot read response headers, so share the trace ID from `HandleInertiaRequests::share()` and read it from the page props as above.
+This is the same following the directive's `inertia` option switches on. See [Inertia](#inertia).
 
 Both the npm build and the inlined script come from one TypeScript source, and CI fails if the committed `resources/client.min.js` does not match a fresh build.
 
@@ -733,7 +762,7 @@ Both the npm build and the inlined script come from one TypeScript source, and C
 
 ```php
 ClientSensor::extend(function ($request, string $kind, array $entry) {
-    $entry['release'] = config('app.release');
+    $entry['tenant'] = $request->getHost();
 
     return $entry;
 });
@@ -833,6 +862,84 @@ The sensor tries three sources in order:
 When nothing resolves, the `trace_id` field is omitted.
 
 Resolved ids are capped at `observability-log.trace_id_max_length` bytes (default 128). Set to `null` or `0` to disable.
+
+## Client IDs
+
+A trace ID covers one request. Three ids from the browser sit above it, each narrower than the last:
+
+| Field | Covers | Changes when |
+| --- | --- | --- |
+| `client_id` | One browser, across reloads and tabs. | The site's storage is cleared. |
+| `client_instance_id` | One running copy of a page in a tab. | The page loads: a reload, a new tab, a full navigation. |
+| `visit_id` | One navigation within that copy. | An SPA navigates. A page that does not route on the client has one visit per instance. |
+| `trace_id` | One request. | Every request. |
+
+Each is on the browser's own `client.*` entries and on every server entry behind them: the requests the page makes, and the jobs and outgoing calls behind those. Query one field (`where visit_id == '9d2b6c1e-3f4a-4b5c-8d7e-6f5a4b3c2d1e'`) to read a browser error beside everything the server did for that visit, or widen to the instance or the browser.
+
+All of them are version 4 UUIDs unless the app supplies its own.
+
+It works without any wiring once [`@observabilityClient`](#client-sensor) is in the layout:
+
+1. The directive mints the instance and its first visit as the page renders and adds them to `Context`, so the entries of the request rendering the page carry them.
+2. The browser agent reads the client ID from `localStorage` (key `observability:client_id`), minting one on a browser's first page.
+3. The agent sends all three as `X-Client-Id`, `X-Client-Instance-Id` and `X-Visit-Id` on every `fetch` and `XMLHttpRequest` addressed to the page's own origin. Requests to other origins are left alone: a custom header there forces a preflight the other side may refuse. A same-origin request that is redirected elsewhere keeps the headers, as any request header does. A header the caller set itself is not overwritten.
+4. `RequestSensor` reads the headers when a request arrives and adds them to `Context`, which carries them into the jobs the request dispatches. Every sensor then puts them on its entry. A queue worker drops them again between jobs, so work it starts itself from a `Queue::looping` callback does not inherit the last job's.
+
+The headers are the browser's to set, so a value that is not 1 to 64 characters of `A-Z a-z 0-9 _ -` is ignored, and nothing should trust an id for more than grouping log entries. Entries logged before the directive renders (a query in the controller, say) belong to the same request and share its `trace_id`, but not the instance or the visit. The request for a page never carries the client ID, which only the browser knows: join through `client_instance_id`.
+
+### The client ID is a persistent identifier
+
+It is stored on the visitor's device and links what one browser does over time, including across sign-ins. Where the law asks for consent before storing such an identifier, get it first, or switch the id off: `OBSERVABILITY_LOG_CLIENT_ID=false` for the whole app (it sets the top-level `client_id` to `null`), or `['client_id' => false]` on the directive, which can follow each visitor's consent. Switched off, the agent keeps no id, removes one it stored earlier, and entries carry a `client_id` of `null`. Entries also carry `null` where the browser blocks storage.
+
+### Cached pages
+
+A page stored in a full-page cache would hand the ids and the trace ID it was rendered with to every visitor it is served to. Pass `cacheable` wherever that can happen: the browser mints its own ids, and its entries carry the trace ID of the post that delivered them until the page makes a visit of its own. The only entry left without the ids is the request for the page itself.
+
+```blade
+@observabilityClient(['cacheable' => ! auth()->check()])
+```
+
+The browser keeps its own copy of a page too, and may show it again on back or forward without asking the server. The agent treats a page reached that way as cacheable whatever the directive said. A page the browser kept running and resumes from its back/forward cache is the same instance, and starts a new visit.
+
+### Inertia
+
+```blade
+@observabilityClient(['inertia' => ['trace_id' => 'traceId']])
+```
+
+With `inertia`, the agent listens for the events Inertia dispatches on the document, so it needs no build step and no import, and is listening before the app's bundle loads. On each page it sets `view` to the page component, and the trace ID to the named page prop (share it from `HandleInertiaRequests::share()`, because router events cannot read response headers).
+
+A visit that asks the server for a whole page and adds a history entry starts a new `visit_id`: a link, a form submission, a redirect that is followed. Its own request carries the new id, so the request that produced a page is the first entry of that page's visit. The page takes the id on when the response arrives, before the new component renders, and keeps the old one if the visit is cancelled or fails before a response. Should a poll's response land while the visit is still in flight, the page takes the new id on then, and gives it back if the visit is cancelled after all.
+
+| Stays in the current visit | Starts a new visit without a request |
+| --- | --- |
+| Partial reloads (`only`, `except`, `reset`) | Back and forward, which restore a page from history |
+| Async visits: `router.reload()`, polling, deferred and lazy props | A page shown from the prefetch cache |
+| Prefetch requests | A client-side `router.push()` |
+| Visits with `replace: true`, such as a filter form | |
+
+Checked in a browser against Inertia 3.9.1, and in the test suite against the 2.3 router. Earlier versions say less, and the agent works from what each dispatches:
+
+- **Before 3.9.0** a navigation does not say what kind it is. The agent takes one as unannounced when no visit that could have caused it is in flight, so going back while a poll or a partial reload is still in flight stays in the current visit.
+- **Before 3.4.0** a visit has no id of its own, and the agent mints one.
+- **Before 2.2.0** nothing is dispatched ahead of the update, so the page takes the new visit on once it has rendered, not before.
+- **On 1.x** a listener cannot add a header to a visit's request. That request carries the `visit_id` of the page it left, and the requests after it carry the new one.
+
+The last two are read from those versions' sources, not run against them.
+
+### Resolution
+
+`observability-log.client_id`, `client_instance_id` and `visit_id` each resolve like `trace_id`: a header list (the first is the one the agent sends), a callable `fn (?Illuminate\Http\Request $request): ?string`, then `Context::get()` of the same name. Set one to `null` and that id is switched off: the directive mints none, the agent sends no header for it, and no sensor logs it.
+
+An app that does not register `RequestSensor` can share the ids from its own middleware:
+
+```php
+use DevtimeLtd\LaravelObservabilityLog\Support\RequestContext;
+
+RequestContext::shareClientIds($request);
+```
+
+A field that does not resolve is omitted.
 
 ## Global fields via Context
 
