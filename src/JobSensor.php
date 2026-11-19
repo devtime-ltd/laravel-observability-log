@@ -277,6 +277,8 @@ class JobSensor
             $entry['trace_id'] = $traceId;
         }
 
+        $entry = [...$entry, ...RequestContext::clientIds(null)];
+
         return $entry;
     }
 
@@ -320,6 +322,8 @@ class JobSensor
         if ($traceId !== null) {
             $entry['trace_id'] = $traceId;
         }
+
+        $entry = [...$entry, ...RequestContext::clientIds(null)];
 
         return array_merge($entry, $measurements);
     }

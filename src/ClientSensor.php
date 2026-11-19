@@ -163,10 +163,12 @@ class ClientSensor
 
         return array_merge([
             'kind' => $kind,
-            'page_id' => self::text($raw['page_id'] ?? null, 64),
+            ...self::clientIds($raw, $request),
             // The page's trace id, not the beacon's, so the entry joins to
             // the http.request that rendered it.
             'trace_id' => self::text($raw['trace_id'] ?? null, 128) ?? RequestContext::traceId($request),
+            'release' => self::text($raw['release'] ?? null, 64),
+            'view' => self::text($raw['view'] ?? null, 120),
             'url' => $url,
             'host' => self::urlPart($url, PHP_URL_HOST),
             'path' => self::urlPart($url, PHP_URL_PATH),
@@ -326,6 +328,27 @@ class ClientSensor
         $height = self::integer($raw['h'] ?? $raw[1] ?? null);
 
         return $width !== null && $height !== null ? $width.'x'.$height : null;
+    }
+
+    /**
+     * From the entry first: a beacon cannot send the ids as headers.
+     *
+     * @param  array<string, mixed>  $raw
+     * @return array<string, string|null>
+     */
+    private static function clientIds(array $raw, ?Request $request): array
+    {
+        $sent = RequestContext::clientIds($request);
+        $enabled = RequestContext::enabledClientIds();
+        $ids = [];
+
+        foreach (RequestContext::CLIENT_IDS as $name) {
+            $ids[$name] = in_array($name, $enabled, true)
+                ? RequestContext::validClientId($raw[$name] ?? null) ?? $sent[$name] ?? null
+                : null;
+        }
+
+        return $ids;
     }
 
     private static function urlPart(?string $url, int $component): ?string

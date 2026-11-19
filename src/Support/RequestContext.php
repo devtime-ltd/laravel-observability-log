@@ -12,6 +12,11 @@ class RequestContext
 {
     public const REDACTED = '[redacted]';
 
+    /** The browser, the running copy of the page in it, and the visit within that. */
+    public const CLIENT_IDS = ['client_id', 'client_instance_id', 'visit_id'];
+
+    private const CLIENT_ID_PATTERN = '/\A[A-Za-z0-9_-]{1,64}\z/';
+
     /** @return array<string, string|array<int, string>>|null */
     public static function headers(?Request $request): ?array
     {
@@ -75,7 +80,7 @@ class RequestContext
     /** Resolves via configured callable, configured header list, then Context::get('trace_id'). */
     public static function traceId(?Request $request): ?string
     {
-        $value = self::resolveTraceId($request);
+        $value = self::resolve('trace_id', $request);
 
         if ($value === null) {
             return null;
@@ -87,16 +92,102 @@ class RequestContext
         );
     }
 
-    private static function resolveTraceId(?Request $request): ?string
+    /**
+     * The client ids known for this request, each resolved via its
+     * configured callable, configured header list, then Context. The
+     * headers are the browser's to set, so anything but a short plain
+     * token is dropped.
+     *
+     * @return array<string, string>
+     */
+    public static function clientIds(?Request $request): array
     {
-        $config = config('observability-log.trace_id');
+        $ids = [];
+
+        foreach (self::enabledClientIds() as $name) {
+            $id = self::validClientId(self::resolve($name, $request));
+
+            if ($id !== null) {
+                $ids[$name] = $id;
+            }
+        }
+
+        return $ids;
+    }
+
+    /**
+     * An id whose config is null is switched off: not sent, not read, not logged.
+     *
+     * @return list<string>
+     */
+    public static function enabledClientIds(): array
+    {
+        return array_values(array_filter(
+            self::CLIENT_IDS,
+            static fn (string $name) => config('observability-log.'.$name) !== null
+        ));
+    }
+
+    public static function validClientId(mixed $value): ?string
+    {
+        return is_string($value) && preg_match(self::CLIENT_ID_PATTERN, $value) === 1 ? $value : null;
+    }
+
+    /**
+     * Puts the request's client ids on Context, where every log record
+     * and every job the request dispatches picks them up.
+     *
+     * @param  array<string, string>|null  $ids  share these rather than the request's own
+     * @return array<string, string>
+     */
+    public static function shareClientIds(?Request $request, ?array $ids = null): array
+    {
+        try {
+            $ids = $ids === null
+                ? self::clientIds($request)
+                : array_intersect_key($ids, array_flip(self::enabledClientIds()));
+
+            foreach ($ids as $name => $id) {
+                if (Context::get($name) !== $id) {
+                    Context::add($name, $id);
+                }
+            }
+
+            return $ids;
+        } catch (Throwable) {
+            return [];
+        }
+    }
+
+    /**
+     * The header the browser agent sends each client id in, where one is configured.
+     *
+     * @return array<string, string|null>
+     */
+    public static function clientIdHeaders(): array
+    {
+        $headers = [];
+
+        foreach (self::CLIENT_IDS as $name) {
+            $config = config('observability-log.'.$name);
+            $header = is_array($config) && ! is_callable($config) ? (array_values($config)[0] ?? null) : null;
+
+            $headers[$name] = is_string($header) && $header !== '' ? $header : null;
+        }
+
+        return $headers;
+    }
+
+    private static function resolve(string $key, ?Request $request): ?string
+    {
+        $config = config('observability-log.'.$key);
 
         if (is_callable($config)) {
             try {
                 $result = call_user_func($config, $request);
             } catch (Throwable $e) {
                 try {
-                    Log::error('[RequestContext] trace_id callable threw: '.$e->getMessage());
+                    Log::error('[RequestContext] '.$key.' callable threw: '.$e->getMessage());
                 } catch (Throwable) {
                 }
 
@@ -119,7 +210,7 @@ class RequestContext
         }
 
         try {
-            return self::stringOrNull(Context::get('trace_id'));
+            return self::stringOrNull(Context::get($key));
         } catch (Throwable) {
             return null;
         }

@@ -141,6 +141,43 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Client ID resolution
+    |--------------------------------------------------------------------------
+    |
+    | Three ids from the browser, each narrower than the last, so a browser
+    | error joins to the requests, jobs and outgoing calls behind it:
+    |
+    |   client_id            this browser, across reloads and tabs
+    |   client_instance_id   one running copy of a page, until it reloads
+    |   visit_id             one navigation within it, for an SPA
+    |
+    | @observabilityClient mints the instance and its first visit, and the
+    | browser agent sends all three back on the page's own fetch and XHR
+    | requests. Below them sits trace_id, one per request.
+    |
+    | Each is an array of request header names (first non-empty wins; the
+    | first is the one the agent sends) or a callable fn (?Request): ?string,
+    | as for trace_id, and falls back to Context::get() of the same name.
+    | null switches that id off: not sent, not read, not logged.
+    |
+    | The client_id is a persistent identifier the agent keeps in the
+    | browser's localStorage. Where the law asks for consent before storing
+    | one, get it or switch it off here.
+    |
+    */
+
+    'client_id' => env('OBSERVABILITY_LOG_CLIENT_ID', true) ? ['X-Client-Id'] : null,
+
+    'client_instance_id' => [
+        'X-Client-Instance-Id',
+    ],
+
+    'visit_id' => [
+        'X-Visit-Id',
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
     | Client IP resolution
     |--------------------------------------------------------------------------
     |
@@ -358,7 +395,8 @@ return [
     | run "php artisan route:clear" after enabling if you cache routes.
     |
     | Entries carry the same trace_id as the request that rendered the
-    | page, so a browser error joins to its "http.request" entry.
+    | page, so a browser error joins to its "http.request" entry, and
+    | the client ids every later request from that page carries too.
     |
     */
 
@@ -390,6 +428,10 @@ return [
         'events' => [
             // 'copy',
         ],
+
+        // The build being served, logged as "release" on every entry so a
+        // minified stack can be matched to the bundle that produced it.
+        'release' => env('OBSERVABILITY_LOG_CLIENT_RELEASE'),
 
         // Fraction of vitals and pageviews the browser sends. Applied
         // client-side, so a sampled-out entry costs no request.

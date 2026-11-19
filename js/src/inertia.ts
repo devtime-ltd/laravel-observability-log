@@ -1,10 +1,11 @@
-import { router, type Page } from "@inertiajs/core";
+import type { Page } from "@inertiajs/core";
 
-import { init, pageview, setTraceId, type Config } from "./core";
+import { followInertia, init, type Config } from "./core";
 
 /**
- * Inertia visits change route without a server request, so the server log
- * never sees them. Returns Inertia's own unsubscribe function.
+ * Inertia visits change route without a full page load, so each one gets
+ * its own visit id, view and trace id. Returns a function that stops
+ * observing.
  *
  * The trace id of a visit arrives in the page props (share it from
  * HandleInertiaRequests), because router events cannot read headers.
@@ -15,11 +16,5 @@ export function observeInertia(
 ): () => void {
     init(config);
 
-    return router.on("navigate", (event) => {
-        if (options.traceId) {
-            setTraceId(options.traceId(event.detail.page) ?? null);
-        }
-
-        pageview();
-    });
+    return followInertia(options.traceId ?? null);
 }
